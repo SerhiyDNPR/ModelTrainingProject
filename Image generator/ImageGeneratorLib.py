@@ -2,6 +2,7 @@ import random
 import numpy as np
 from PIL import Image
 import random
+from PIL import ImageDraw
 
 def generate_random_color():
     return tuple([random.randint(0, 255) for _ in range(3)])
@@ -22,6 +23,45 @@ def draw_random_square(image, width, height):
     image_test, label = insert_object(image, square_img)
 
     return image_test, label
+
+def draw_random_ufo(image, width, height):
+    # Generate random UFO size
+    ufo_width = random.randint(60, 300)
+    ufo_height = int(ufo_width * random.uniform(0.25, 0.5))
+
+    # Create UFO image with transparent background
+    ufo_img = Image.new("RGBA", (ufo_width, ufo_height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(ufo_img)
+
+    # Draw main body (ellipse)
+    body_color = generate_random_color()
+    draw.ellipse([0, ufo_height//4, ufo_width, ufo_height], fill=body_color)
+
+    # Draw dome (smaller ellipse on top)
+    dome_width = int(ufo_width * random.uniform(0.4, 0.7))
+    dome_height = int(ufo_height * 0.5)
+    dome_x0 = (ufo_width - dome_width) // 2
+    dome_y0 = 0
+    dome_x1 = dome_x0 + dome_width
+    dome_y1 = dome_y0 + dome_height
+    dome_color = generate_random_color()
+    draw.ellipse([dome_x0, dome_y0, dome_x1, dome_y1], fill=dome_color)
+
+    # Optionally add lights (small circles)
+    num_lights = random.randint(3, 7)
+    for i in range(num_lights):
+        light_x = int((i + 1) * ufo_width / (num_lights + 1))
+        light_y = int(ufo_height * 0.85)
+        light_radius = max(2, ufo_width // 30)
+        light_color = generate_random_color()
+        draw.ellipse([
+            (light_x - light_radius, light_y - light_radius),
+            (light_x + light_radius, light_y + light_radius)
+        ], fill=light_color)
+
+    # Insert UFO into the image
+    image_with_ufo, label = insert_object(image, ufo_img)
+    return image_with_ufo, label
 
 def draw_detailed_background(draw, width, height):
     num_elements = 2000
