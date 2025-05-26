@@ -9,7 +9,24 @@ from torchvision.datasets import CIFAR10
 import torch
 import torchvision.transforms
 
-def add_cifar_images(num_images=500):
+def process_cifar_image(args, cifar_dataset, transform, first_image_index):
+    i, idx = args
+    i += first_image_index  # Adjust index to start from first_image_index
+    img, _ = cifar_dataset[idx]
+    img = transform(img)
+    yolo_label = ""
+    if random.random() < 0.5:
+        img, yolo_label = draw_random_ufo(img)
+    img = img.filter(ImageFilter.GaussianBlur(radius=1))
+
+    filename = f"Data/Image{i:04d}.jpg"
+    img.convert("RGB").save(filename, "JPEG")
+
+    label_filename = f"Data/Image{i:04d}.txt"
+    with open(label_filename, "w") as f:
+        f.write(yolo_label)
+
+def add_cifar_images(num_images=500, first_image_index=500):
     # Download CIFAR10 dataset
     cifar_dataset = CIFAR10(root="cifar_data", train=True, download=True)
     transform = torchvision.transforms.Compose([
@@ -19,21 +36,11 @@ def add_cifar_images(num_images=500):
     ])
 
     indices = torch.randperm(len(cifar_dataset))[:num_images]
-    for i, idx in enumerate(indices):
-        img, _ = cifar_dataset[idx]
-        img = transform(img)
-        yolo_label = ""
-        # Add UFO to half of the images
-        if i < num_images // 2:
-            img, yolo_label = draw_random_ufo(img)
-        img = img.filter(ImageFilter.GaussianBlur(radius=1))
+    args_list = [(i, idx) for i, idx in enumerate(indices)]
 
-        filename = f"Data/Image{i:04d}.jpg"
-        img.convert("RGB").save(filename, "JPEG")
+    with Pool(cpu_count()) as pool:
+        pool.starmap(process_cifar_image, [(args, cifar_dataset, transform, first_image_index) for args in args_list])
 
-        label_filename = f"Data/Image{i:04d}.txt"
-        with open(label_filename, "w") as f:
-            f.write(yolo_label)             
 
 def generate_image(index):
     width, height = 640, 480
@@ -68,7 +75,7 @@ if __name__ == "__main__":
 
     prepare_data_folder()
 
-    #with Pool(cpu_count()) as pool:
-    #    pool.map(generate_image, range(500))
+    with Pool(cpu_count()) as pool:
+        pool.map(generate_image, range(500))
 
     add_cifar_images(500)
