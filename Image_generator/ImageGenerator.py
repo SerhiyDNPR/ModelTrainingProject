@@ -5,26 +5,55 @@ import math
 import os
 from multiprocessing import Pool, cpu_count
 from ImageGeneratorLib import draw_gradient_background, draw_detailed_background, draw_random_square, draw_random_ufo 
+from torchvision.datasets import CIFAR10
+import torch
+import torchvision.transforms
 
+def add_cifar_images(num_images=500):
+    # Download CIFAR10 dataset
+    cifar_dataset = CIFAR10(root="cifar_data", train=True, download=True)
+    transform = torchvision.transforms.Compose([
+        torchvision.transforms.ToTensor(),  # Convert PIL Image to Tensor
+        torchvision.transforms.Resize((480, 640)),
+        torchvision.transforms.ToPILImage()
+    ])
+
+    indices = torch.randperm(len(cifar_dataset))[:num_images]
+    for i, idx in enumerate(indices):
+        img, _ = cifar_dataset[idx]
+        img = transform(img)
+        yolo_label = ""
+        # Add UFO to half of the images
+        if i < num_images // 2:
+            img, yolo_label = draw_random_ufo(img)
+        img = img.filter(ImageFilter.GaussianBlur(radius=1))
+
+        filename = f"Data/Image{i:04d}.jpg"
+        img.convert("RGB").save(filename, "JPEG")
+
+        label_filename = f"Data/Image{i:04d}.txt"
+        with open(label_filename, "w") as f:
+            f.write(yolo_label)             
 
 def generate_image(index):
     width, height = 640, 480
+
     image = draw_gradient_background(width, height)
+
     draw = ImageDraw.Draw(image)
 
     yolo_label = ""
     draw_detailed_background(draw, width, height)
-    #if random.random() < 0.5:
-    #    image, yolo_label = draw_random_square(image, width, height)
+
     if random.random() < 0.5:
-        image, yolo_label = draw_random_ufo(image, width, height)        
+        image, yolo_label = draw_random_ufo(image)
 
     image = image.filter(ImageFilter.GaussianBlur(radius=1))
 
-    filename = f"Data/Image{index:03d}.jpg"
+    filename = f"Data/Image{index:04d}.jpg"
     image.convert("RGB").save(filename, "JPEG")
 
-    label_filename = f"Data/Image{index:03d}.txt"
+    label_filename = f"Data/Image{index:04d}.txt"
     with open(label_filename, "w") as f:
         f.write(yolo_label)
 
@@ -39,5 +68,7 @@ if __name__ == "__main__":
 
     prepare_data_folder()
 
-    with Pool(cpu_count()) as pool:
-        pool.map(generate_image, range(1000))
+    #with Pool(cpu_count()) as pool:
+    #    pool.map(generate_image, range(500))
+
+    add_cifar_images(500)

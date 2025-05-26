@@ -47,7 +47,7 @@ val: images/val
 test: images/test
 
 nc: 1
-names: ['square']
+names: ['UFO']
 """)
 
 # Step 6: Train the model
