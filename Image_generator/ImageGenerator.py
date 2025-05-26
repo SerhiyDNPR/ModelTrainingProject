@@ -4,7 +4,7 @@ import random
 import math
 import os
 from multiprocessing import Pool, cpu_count
-from ImageGeneratorLib import draw_gradient_background, draw_detailed_background, draw_random_square 
+from ImageGeneratorLib import draw_gradient_background, draw_detailed_background, draw_random_square, draw_random_ufo 
 
 
 def generate_image(index):
@@ -14,8 +14,10 @@ def generate_image(index):
 
     yolo_label = ""
     draw_detailed_background(draw, width, height)
+    #if random.random() < 0.5:
+    #    image, yolo_label = draw_random_square(image, width, height)
     if random.random() < 0.5:
-        image, yolo_label = draw_random_square(image, width, height)
+        image, yolo_label = draw_random_ufo(image, width, height)        
 
     image = image.filter(ImageFilter.GaussianBlur(radius=1))
 

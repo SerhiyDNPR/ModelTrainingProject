@@ -1,0 +1,11 @@
+data/
+*.jpeg
+*.txt
+*.jpg
+*.pt
+*.gz
+*.yaml
+runs/
+YoloDataset/
+*.7z
+*.pyc

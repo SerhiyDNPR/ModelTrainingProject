@@ -51,8 +51,8 @@ names: ['square']
 """)
 
 # Step 6: Train the model
-model = YOLO("yolov8n.yaml")  # Or use "yolov8n.pt" for pretrained weights
-model.train(data="yolo_config.yaml", epochs=50, imgsz=640)
+model = YOLO("yolov8n.pt")  # Or use "yolov8n.pt" for pretrained weights
+model.train(data="yolo_config.yaml", epochs=25, imgsz=640)
 
 # Step 7: Save the model
 model.save("square_detector.pt")

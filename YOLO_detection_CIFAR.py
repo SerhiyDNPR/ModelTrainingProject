@@ -7,13 +7,14 @@ import torchvision.transforms as transforms
 from torchvision.datasets import CIFAR10
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+from Image_generator.ImageGeneratorLib import draw_random_ufo 
 
 # === Завантаження публічної бібліотеки зображень ===
 cifar = CIFAR10(root='.', download=True)
 images = [Image.fromarray(np.array(cifar[i][0])) for i in range(len(cifar))]
 
 # === Завантаження навченого детектора YOLO ===
-model = YOLO("square_detector.pt")
+model = YOLO("UFO_detector.pt")
 
 # === Додавання випадкового квадрата до зображення ===
 def generate_random_color():
