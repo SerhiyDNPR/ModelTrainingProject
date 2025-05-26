@@ -9,6 +9,8 @@ from torchvision.datasets import CIFAR10
 import torch
 import torchvision.transforms
 
+width, height = 640, 480
+
 def process_cifar_image(args, cifar_dataset, transform, first_image_index):
     i, idx = args
     i += first_image_index  # Adjust index to start from first_image_index
@@ -26,12 +28,12 @@ def process_cifar_image(args, cifar_dataset, transform, first_image_index):
     with open(label_filename, "w") as f:
         f.write(yolo_label)
 
-def add_cifar_images(num_images=500, first_image_index=500):
+def add_cifar_images(num_images, first_image_index):
     # Download CIFAR10 dataset
     cifar_dataset = CIFAR10(root="cifar_data", train=True, download=True)
     transform = torchvision.transforms.Compose([
         torchvision.transforms.ToTensor(),  # Convert PIL Image to Tensor
-        torchvision.transforms.Resize((480, 640)),
+        torchvision.transforms.Resize((height, width)),
         torchvision.transforms.ToPILImage()
     ])
 
@@ -43,7 +45,6 @@ def add_cifar_images(num_images=500, first_image_index=500):
 
 
 def generate_image(index):
-    width, height = 640, 480
 
     image = draw_gradient_background(width, height)
 
@@ -75,7 +76,9 @@ if __name__ == "__main__":
 
     prepare_data_folder()
 
-    with Pool(cpu_count()) as pool:
-        pool.map(generate_image, range(500))
+    num_images = 500
 
-    add_cifar_images(500)
+    with Pool(cpu_count()) as pool:
+        pool.map(generate_image, range(num_images))
+
+    add_cifar_images(num_images, num_images)

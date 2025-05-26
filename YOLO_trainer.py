@@ -8,9 +8,19 @@ from glob import glob
 from sklearn.model_selection import train_test_split
 from ultralytics import YOLO
 
+def prepare_yolo_folder(yolo_folder="YoloDataset"):
+    os.makedirs(yolo_folder, exist_ok=True)
+    for filename in os.listdir(yolo_folder):
+        file_path = os.path.join(yolo_folder, filename)
+        if os.path.isfile(file_path):
+            os.remove(file_path)
+
 # Step 1: Prepare dataset directories
 data_dir = "Data"
 dataset_dir = "YoloDataset"
+
+prepare_yolo_folder(dataset_dir)
+
 images_dir = os.path.join(dataset_dir, "images")
 labels_dir = os.path.join(dataset_dir, "labels")
 
@@ -53,6 +63,17 @@ names: ['UFO']
 # Step 6: Train the model
 model = YOLO("yolov8n.pt")  # Or use "yolov8n.pt" for pretrained weights
 model.train(data="yolo_config.yaml", epochs=25, imgsz=640)
+
+# Train the model
+model.train(
+    data='yolo_config.yaml',       # dataset config
+    epochs=25,
+    imgsz=640,
+    batch=16,
+    project='runs/train',           # default path for logs
+    name='UFO_training_tensorboard',         # experiment name
+    exist_ok=True
+)
 
 # Step 7: Save the model
 model.save("square_detector.pt")
