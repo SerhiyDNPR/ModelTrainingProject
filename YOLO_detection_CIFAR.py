@@ -7,7 +7,9 @@ import torchvision.transforms as transforms
 from torchvision.datasets import CIFAR10
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from Image_generator.ImageGeneratorLib import draw_random_ufo 
+from Image_generator.ImageGeneratorLib import draw_random_ufo, yolo_label_to_box 
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 
 # === Завантаження публічної бібліотеки зображень ===
 cifar = CIFAR10(root='.', download=True)
@@ -17,43 +19,6 @@ images = [Image.fromarray(np.array(cifar[i][0])) for i in range(len(cifar))]
 model = YOLO("UFO_detector.pt")
 
 # === Додавання випадкового квадрата до зображення ===
-def generate_random_color():
-    return tuple([random.randint(0, 255) for _ in range(3)])
-
-def add_random_square(image):
-    image = image.convert("RGB").resize((640, 480))
-    draw = ImageDraw.Draw(image)
-    width, height = image.size
-
-    center_x = random.randint(100, 540)
-    center_y = random.randint(100, 380)
-    size = random.randint(30, 100)
-    angle = random.uniform(0, 360)
-    scale = random.uniform(0.5, 1.5)
-    half_size = size * scale / 2
-
-    pts = np.array([
-        [-half_size, -half_size],
-        [ half_size, -half_size],
-        [ half_size,  half_size],
-        [-half_size,  half_size]
-    ])
-
-    theta = math.radians(angle)
-    c, s = math.cos(theta), math.sin(theta)
-    rotation_matrix = np.array([[c, -s], [s, c]])
-    rotated_pts = np.dot(pts, rotation_matrix) + [center_x, center_y]
-
-    polygon = [tuple(p) for p in rotated_pts]
-    color = generate_random_color()
-    draw.polygon(polygon, fill=color)
-
-    xs = rotated_pts[:, 0]
-    ys = rotated_pts[:, 1]
-    x_min, x_max = max(0, min(xs)), min(width, max(xs))
-    y_min, y_max = max(0, min(ys)), min(height, max(ys))
-    return image.filter(ImageFilter.GaussianBlur(radius=1)), [x_min, y_min, x_max, y_max]
-
 def compute_iou(boxA, boxB):
     xA = max(boxA[0], boxB[0])
     yA = max(boxA[1], boxB[1])
@@ -66,21 +31,50 @@ def compute_iou(boxA, boxB):
     boxBArea = (boxB[2] - boxB[0]) * (boxB[3] - boxB[1])
     return interArea / float(boxAArea + boxBArea - interArea)
 
+def draw_all_detection_boxes(image_with_object, result):
+    if result.boxes is not None and len(result.boxes) > 0:
+        _, ax = plt.subplots(1)
+        ax.imshow(image_with_object)
+        for box, score in zip(result.boxes.xyxy.cpu().numpy(), result.boxes.conf.cpu().numpy()):
+            rect = patches.Rectangle(
+                (box[0], box[1]),
+                box[2] - box[0],
+                box[3] - box[1],
+                linewidth=2,
+                edgecolor='red',
+                facecolor='none'
+            )
+            ax.add_patch(rect)
+            ax.text(
+                box[0],
+                box[1] - 5,
+                f"{score:.2f}",
+                color='yellow',
+                fontsize=10,
+                bbox=dict(facecolor='black', alpha=0.5, pad=0)
+            )
+        plt.axis('off')
+        plt.show()
+
 # === Прогон по всіх зображеннях з обрахунком метрик ===
 ious = []
 TP = FP = FN = TN = 0
 
 for idx, img in enumerate(tqdm(images[:100], desc="Evaluating on synthetic data")):
-    has_square = idx % 2 == 0
-    if has_square:
-        modified, gt_box = add_random_square(img)
-    else:
-        modified = img.convert("RGB").resize((640, 480)).filter(ImageFilter.GaussianBlur(radius=1))
-        gt_box = None
+    has_object = idx % 2 == 0
 
-    result = model.predict(modified, imgsz=640, conf=0.5)[0]
+    image_with_object = img.convert("RGB").resize((640, 480)).filter(ImageFilter.GaussianBlur(radius=1))
+    gt_box = None
+
+    if has_object:
+        image_with_object, gt_label = draw_random_ufo(image_with_object)
+        gt_box = yolo_label_to_box(gt_label, image_with_object.width, image_with_object.height)
+
+    result = model.predict(image_with_object, imgsz=640, conf=0.5)[0]
     pred_boxes = result.boxes.xyxy.cpu().numpy() if result.boxes else []
 
+    draw_all_detection_boxes(image_with_object, result)
+    
     if gt_box:
         if len(pred_boxes) > 0:
             best_iou = max(compute_iou(gt_box, pred_box) for pred_box in pred_boxes)

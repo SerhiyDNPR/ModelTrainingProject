@@ -18,7 +18,7 @@ def compute_iou(boxA, boxB):
     return interArea / float(boxAArea + boxBArea - interArea)
 
 # === Завантаження моделі ===
-model = YOLO("square_detector.pt")
+model = YOLO("UFO_detector.pt")
 
 # === Шляхи до тестової вибірки ===
 test_images_dir = "YoloDataset/images/test"

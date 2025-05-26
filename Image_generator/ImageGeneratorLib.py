@@ -24,7 +24,7 @@ def draw_random_square(image, width, height):
 
     return image_test, label
 
-def draw_random_ufo(image, width, height):
+def draw_random_ufo(image):
     # Generate random UFO size
     ufo_width = random.randint(60, 300)
     ufo_height = int(ufo_width * random.uniform(0.25, 0.5))
@@ -181,3 +181,18 @@ def insert_object(imgBackground, imgObject):
     yolo_label = f"0 {x_center:.6f} {y_center:.6f} {box_width:.6f} {box_height:.6f}\n"
 
     return imgBackground, yolo_label
+
+def yolo_label_to_box(yolo_label, img_width, img_height):
+    """
+    Конвертує YOLO label (x_center, y_center, width, height, всі в [0,1]) у (x1, y1, x2, y2)
+    """
+    object_id, x_center, y_center, w, h = map(float, yolo_label.strip().split())
+    x_center *= img_width
+    y_center *= img_height
+    w *= img_width
+    h *= img_height
+    x1 = x_center - w / 2
+    y1 = y_center - h / 2
+    x2 = x_center + w / 2
+    y2 = y_center + h / 2
+    return [x1, y1, x2, y2]
