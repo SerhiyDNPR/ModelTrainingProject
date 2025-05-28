@@ -7,5 +7,6 @@ data/
 *.yaml
 runs/
 YoloDataset/
+cifar_data/
 *.7z
 *.pyc

@@ -7,9 +7,10 @@ from multiprocessing import Pool, cpu_count
 from ImageGeneratorLib import draw_gradient_background, draw_detailed_background, draw_random_square, draw_random_ufo 
 from torchvision.datasets import CIFAR10
 import torch
+from tqdm import tqdm
 import torchvision.transforms
 
-width, height = 640, 480
+width, height = 3840, 2160
 
 def process_cifar_image(args, cifar_dataset, transform, first_image_index):
     i, idx = args
@@ -72,13 +73,35 @@ def prepare_data_folder():
         if os.path.isfile(file_path):
             os.remove(file_path)
 
+# Progress for CIFAR image generation
+def add_cifar_images_with_progress(num_images, first_image_index):
+    cifar_dataset = CIFAR10(root="cifar_data", train=True, download=True)
+    transform = torchvision.transforms.Compose([
+        torchvision.transforms.ToTensor(),
+        torchvision.transforms.Resize((height, width)),
+        torchvision.transforms.ToPILImage()
+    ])
+    indices = torch.randperm(len(cifar_dataset))[:num_images]
+    args_list = [(i, idx) for i, idx in enumerate(indices)]
+
+    with Pool(cpu_count()) as pool:
+        list(tqdm(
+            pool.starmap(
+                process_cifar_image,
+                [(args, cifar_dataset, transform, first_image_index) for args in args_list]
+            ),
+            total=num_images,
+            desc="Generating CIFAR images"
+        ))
+
 if __name__ == "__main__":
 
     prepare_data_folder()
 
     num_images = 500
 
+    # Progress for synthetic image generation
     with Pool(cpu_count()) as pool:
-        pool.map(generate_image, range(num_images))
+        list(tqdm(pool.imap(generate_image, range(num_images)), total=num_images, desc="Generating synthetic images"))
 
-    add_cifar_images(num_images, num_images)
+    add_cifar_images_with_progress(num_images, num_images)

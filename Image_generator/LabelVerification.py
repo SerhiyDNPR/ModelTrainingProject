@@ -10,8 +10,8 @@ label_ext = ".txt"
 
 # === Завантаження зображення та розмітки ===
 def load_and_display(image_id):
-    image_path = os.path.join(images_dir, f"{image_prefix}{image_id:03d}{image_ext}")
-    label_path = os.path.join(images_dir, f"{image_prefix}{image_id:03d}{label_ext}")
+    image_path = os.path.join(images_dir, f"{image_prefix}{image_id:04d}{image_ext}")
+    label_path = os.path.join(images_dir, f"{image_prefix}{image_id:04d}{label_ext}")
 
     image = Image.open(image_path).convert("RGB")
     draw = ImageDraw.Draw(image)
@@ -36,5 +36,5 @@ def load_and_display(image_id):
     plt.show()
 
 # === Приклад використання ===
-for i in range(3):
+for i in range(10):
     load_and_display(i+1)

@@ -26,7 +26,7 @@ def draw_random_square(image, width, height):
 
 def draw_random_ufo(image):
     # Generate random UFO size
-    ufo_width = random.randint(60, 500)
+    ufo_width = random.randint(60, 1000)
     ufo_height = int(ufo_width * random.uniform(0.25, 0.5))
 
     # Create UFO image with transparent background
