@@ -9,7 +9,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from tqdm import tqdm # For progress bar
-from CustomObjectDetectionDataset import CustomObjectDetectionDataset
+from Res_NET_Dataset import CustomObjectDetectionDataset
 
 # --- Configuration ---
 # Set the path to your dataset
@@ -31,7 +31,6 @@ TRAIN_SPLIT_RATIO = 0.8 # 80% for training, 20% for validation
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {DEVICE}")
 
-from CustomObjectDetectionDataset import CustomObjectDetectionDataset
 # --- 2. Data Augmentations and Transforms ---
 def get_transform(train):
     transforms = []
@@ -130,3 +129,5 @@ if __name__ == "__main__":
     # Save the trained model (optional)
     torch.save(model.state_dict(), 'faster_rcnn_model.pth')
     print("Model saved to faster_rcnn_model.pth")
+
+    
