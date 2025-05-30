@@ -10,7 +10,7 @@ import torch
 from tqdm import tqdm
 import torchvision.transforms
 
-width, height = 3840, 2160
+width, height = 640, 480 #3840, 2160
 
 def process_cifar_image(args, cifar_dataset, transform, first_image_index):
     i, idx = args
