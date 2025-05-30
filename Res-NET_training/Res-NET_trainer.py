@@ -13,12 +13,10 @@ from tqdm import tqdm # For progress bar
 # --- Configuration ---
 # Set the path to your dataset
 DATA_DIR = 'Data'
-IMAGES_DIR = os.path.join(DATA_DIR, 'images')
-LABELS_DIR = os.path.join(DATA_DIR, 'labels')
 
 # Define the number of classes (e.g., if you have 'car' and 'person', num_classes = 2 + 1 for background)
 # IMPORTANT: Adjust this based on your actual number of classes.
-NUM_CLASSES = 2  # Example: 1 for 'object' + 1 for background. If you have 2 classes, set to 3.
+NUM_CLASSES = 1  # Example: 1 for 'object' + 1 for background. If you have 2 classes, set to 3.
 # If you have specific class names, you can map them to integers starting from 1 (0 is background)
 # Example: CLASS_NAMES = ['background', 'car', 'person']
 
@@ -34,63 +32,68 @@ print(f"Using device: {DEVICE}")
 
 # --- 1. Custom Dataset Class ---
 class CustomObjectDetectionDataset(Dataset):
-    def __init__(self, images_dir, labels_dir, transforms=None):
-        self.images_dir = images_dir
-        self.labels_dir = labels_dir
+    def __init__(self, data_dir, transforms=None):
+        """
+        Args:
+            data_dir (str): Directory containing both images and label files.
+            transforms (callable, optional): Optional transform to be applied on a sample.
+        """
+        self.data_dir = data_dir
         self.transforms = transforms
-        self.image_files = [f for f in os.listdir(images_dir) if f.endswith(('.jpg', '.jpeg', '.png'))]
-        self.image_files.sort() # Ensure consistent order
+
+        # List all image files (jpg, jpeg, png)
+        self.image_files = [
+            f for f in os.listdir(data_dir)
+            if f.lower().endswith(('.jpg', '.jpeg', '.png'))
+        ]
+        self.image_files.sort()  # Ensure consistent order
 
     def __len__(self):
         return len(self.image_files)
 
     def __getitem__(self, idx):
-        img_name = self.image_files[idx]
-        img_path = os.path.join(self.images_dir, img_name)
-        label_name = os.path.splitext(img_name)[0] + '.txt'
-        label_path = os.path.join(self.labels_dir, label_name)
+        while True:
+            img_name = self.image_files[idx]
+            img_path = os.path.join(self.data_dir, img_name)
+            label_name = os.path.splitext(img_name)[0] + '.txt'
+            label_path = os.path.join(self.data_dir, label_name)
 
-        # Load image
-        img = Image.open(img_path).convert("RGB")
-        img_width, img_height = img.size
+            img = Image.open(img_path).convert("RGB")
+            img_width, img_height = img.size
 
-        boxes = []
-        labels = []
+            boxes = []
+            labels = []
 
-        # Load labels (YOLO format: class_id x_center y_center width height)
-        if os.path.exists(label_path):
-            with open(label_path, 'r') as f:
-                for line in f:
-                    parts = list(map(float, line.strip().split(' ')))
-                    class_id = int(parts[0])
-                    x_center, y_center, width, height = parts[1:]
+            if os.path.exists(label_path):
+                with open(label_path, 'r') as f:
+                    for line in f:
+                        parts = list(map(float, line.strip().split(' ')))
+                        class_id = int(parts[0])
+                        x_center, y_center, width, height = parts[1:]
+                        x_min = (x_center - width / 2) * img_width
+                        y_min = (y_center - height / 2) * img_height
+                        x_max = (x_center + width / 2) * img_width
+                        y_max = (y_center + height / 2) * img_height
+                        boxes.append([x_min, y_min, x_max, y_max])
+                        labels.append(class_id + 1)
 
-                    # Convert YOLO format to [x_min, y_min, x_max, y_max]
-                    # Faster R-CNN expects absolute pixel coordinates
-                    x_min = (x_center - width / 2) * img_width
-                    y_min = (y_center - height / 2) * img_height
-                    x_max = (x_center + width / 2) * img_width
-                    y_max = (y_center + height / 2) * img_height
+            # Skip images with no boxes
+            if len(boxes) == 0:
+                # Pick another random index
+                idx = np.random.randint(0, len(self.image_files))
+                continue
 
-                    boxes.append([x_min, y_min, x_max, y_max])
-                    labels.append(class_id + 1) # Add 1 because Faster R-CNN expects class 0 as background
+            boxes = torch.as_tensor(boxes, dtype=torch.float32)
+            labels = torch.as_tensor(labels, dtype=torch.int64)
 
-        # Convert to PyTorch tensors
-        boxes = torch.as_tensor(boxes, dtype=torch.float32)
-        labels = torch.as_tensor(labels, dtype=torch.int64)
+            target = {}
+            target["boxes"] = boxes
+            target["labels"] = labels
 
-        # Create target dictionary
-        target = {}
-        target["boxes"] = boxes
-        target["labels"] = labels
-        # target["image_id"] = torch.tensor([idx]) # Optional, but good practice for COCO evaluation
-        # target["area"] = (boxes[:, 3] - boxes[:, 1]) * (boxes[:, 2] - boxes[:, 0]) # Optional
-        # target["iscrowd"] = torch.zeros((len(boxes),), dtype=torch.int64) # Optional
+            if self.transforms:
+                img = self.transforms(img)
 
-        if self.transforms:
-            img = self.transforms(img)
-
-        return img, target
+            return img, target
 
 # --- 2. Data Augmentations and Transforms ---
 def get_transform(train):
@@ -187,34 +190,9 @@ def visualize_predictions(model, dataset, num_images_to_show=3, score_threshold=
 
 # --- Main execution ---
 if __name__ == "__main__":
-    # Create dummy data directories and files if they don't exist for demonstration
-    if not os.path.exists(IMAGES_DIR):
-        os.makedirs(IMAGES_DIR)
-    if not os.path.exists(LABELS_DIR):
-        os.makedirs(LABELS_DIR)
-
-    # Create some dummy images and labels for testing
-    if not os.listdir(IMAGES_DIR) or not os.listdir(LABELS_DIR):
-        print("Creating dummy dataset for demonstration...")
-        dummy_image_size = (640, 480)
-        for i in range(10): # Create 10 dummy images
-            dummy_img = Image.new('RGB', dummy_image_size, color = (i*20 % 255, i*30 % 255, i*40 % 255))
-            dummy_img.save(os.path.join(IMAGES_DIR, f'dummy_image_{i:02d}.jpg'))
-
-            # Create dummy YOLO labels: class_id x_center y_center width height
-            # Example: one object of class 0 (which will be class 1 in Faster R-CNN)
-            # and one object of class 1 (which will be class 2 in Faster R-CNN)
-            with open(os.path.join(LABELS_DIR, f'dummy_image_{i:02d}.txt'), 'w') as f:
-                # Object 1 (class 0 in YOLO, class 1 in Faster R-CNN)
-                f.write(f"0 0.5 0.5 0.2 0.3\n")
-                # Object 2 (class 1 in YOLO, class 2 in Faster R-CNN)
-                f.write(f"1 0.2 0.8 0.1 0.15\n")
-        print("Dummy dataset created.")
-
     # Initialize dataset
     dataset = CustomObjectDetectionDataset(
-        images_dir=IMAGES_DIR,
-        labels_dir=LABELS_DIR,
+        data_dir=DATA_DIR,
         transforms=get_transform(train=True)
     )
 
@@ -255,8 +233,8 @@ if __name__ == "__main__":
     print("Training complete!")
 
     # Save the trained model (optional)
-    # torch.save(model.state_dict(), 'faster_rcnn_model.pth')
-    # print("Model saved to faster_rcnn_model.pth")
+    torch.save(model.state_dict(), 'faster_rcnn_model.pth')
+    print("Model saved to faster_rcnn_model.pth")
 
     print("\nVisualizing predictions on validation set...")
     # Use the validation dataset for visualization, but ensure it uses the same transforms
@@ -264,9 +242,7 @@ if __name__ == "__main__":
     # For this example, I'll re-initialize a dataset for visualization without train transforms.
     # A better approach would be to have separate transform pipelines for train/val/inference.
     val_dataset_for_viz = CustomObjectDetectionDataset(
-        images_dir=IMAGES_DIR,
-        labels_dir=LABELS_DIR,
+        data_dir=DATA_DIR,
         transforms=get_transform(train=False) # No augmentation for visualization
     )
     visualize_predictions(model, val_dataset_for_viz, num_images_to_show=3)
-
