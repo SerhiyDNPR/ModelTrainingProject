@@ -4,7 +4,7 @@ import random
 import math
 import os
 from multiprocessing import Pool, cpu_count
-from ImageGeneratorLib import draw_gradient_background, draw_detailed_background, draw_random_square, draw_random_ufo 
+from mypkg.Image_generator.ImageGeneratorLib import draw_gradient_background, draw_detailed_background, draw_random_square, draw_random_ufo 
 from torchvision.datasets import CIFAR10
 import torch
 from tqdm import tqdm
@@ -12,7 +12,7 @@ import torchvision.transforms
 
 width, height = 640, 480 #3840, 2160
 
-def process_cifar_image(args, cifar_dataset, transform, first_image_index):
+def process_cifar_image(args, cifar_dataset, transform, first_image_index, output_folder="Data"):
     i, idx = args
     i += first_image_index  # Adjust index to start from first_image_index
     img, _ = cifar_dataset[idx]
@@ -22,14 +22,14 @@ def process_cifar_image(args, cifar_dataset, transform, first_image_index):
         img, yolo_label = draw_random_ufo(img)
     img = img.filter(ImageFilter.GaussianBlur(radius=1))
 
-    filename = f"Data/Image{i:04d}.jpg"
+    filename = f"{output_folder}/Image{i:04d}.jpg"
     img.convert("RGB").save(filename, "JPEG")
 
-    label_filename = f"Data/Image{i:04d}.txt"
+    label_filename = f"{output_folder}/Image{i:04d}.txt"
     with open(label_filename, "w") as f:
         f.write(yolo_label)
 
-def add_cifar_images(num_images, first_image_index):
+def add_cifar_images(num_images, first_image_index, output_folder="Data"):
     # Download CIFAR10 dataset
     cifar_dataset = CIFAR10(root="cifar_data", train=True, download=True)
     transform = torchvision.transforms.Compose([
@@ -42,10 +42,10 @@ def add_cifar_images(num_images, first_image_index):
     args_list = [(i, idx) for i, idx in enumerate(indices)]
 
     with Pool(cpu_count()) as pool:
-        pool.starmap(process_cifar_image, [(args, cifar_dataset, transform, first_image_index) for args in args_list])
+        pool.starmap(process_cifar_image, [(args, cifar_dataset, transform, first_image_index, output_folder) for args in args_list])
 
 
-def generate_image(index):
+def generate_image(index, output_folder="Data"):
 
     image = draw_gradient_background(width, height)
 
@@ -59,22 +59,22 @@ def generate_image(index):
 
     image = image.filter(ImageFilter.GaussianBlur(radius=1))
 
-    filename = f"Data/Image{index:04d}.jpg"
+    filename = f"{output_folder}/Image{index:04d}.jpg"
     image.convert("RGB").save(filename, "JPEG")
 
-    label_filename = f"Data/Image{index:04d}.txt"
+    label_filename = f"{output_folder}/Image{index:04d}.txt"
     with open(label_filename, "w") as f:
         f.write(yolo_label)
 
-def prepare_data_folder():
-    os.makedirs("Data", exist_ok=True)
-    for filename in os.listdir("Data"):
-        file_path = os.path.join("Data", filename)
+def prepare_data_folder(output_folder="Data"):
+    os.makedirs(output_folder, exist_ok=True)
+    for filename in os.listdir(output_folder):
+        file_path = os.path.join(output_folder, filename)
         if os.path.isfile(file_path):
             os.remove(file_path)
 
 # Progress for CIFAR image generation
-def add_cifar_images_with_progress(num_images, first_image_index):
+def add_cifar_images_with_progress(num_images, first_image_index, output_folder="Data"):
     cifar_dataset = CIFAR10(root="cifar_data", train=True, download=True)
     transform = torchvision.transforms.Compose([
         torchvision.transforms.ToTensor(),
@@ -88,7 +88,7 @@ def add_cifar_images_with_progress(num_images, first_image_index):
         list(tqdm(
             pool.starmap(
                 process_cifar_image,
-                [(args, cifar_dataset, transform, first_image_index) for args in args_list]
+                [(args, cifar_dataset, transform, first_image_index, output_folder) for args in args_list]
             ),
             total=num_images,
             desc="Generating CIFAR images"
@@ -96,12 +96,13 @@ def add_cifar_images_with_progress(num_images, first_image_index):
 
 if __name__ == "__main__":
 
-    prepare_data_folder()
+    output_folder = "Data"  # You can change this to any folder name
+    prepare_data_folder(output_folder)
 
     num_images = 500
 
     # Progress for synthetic image generation
     with Pool(cpu_count()) as pool:
-        list(tqdm(pool.imap(generate_image, range(num_images)), total=num_images, desc="Generating synthetic images"))
+        list(tqdm(pool.imap(lambda i: generate_image(i, output_folder), range(num_images)), total=num_images, desc="Generating synthetic images"))
 
-    add_cifar_images_with_progress(num_images, num_images)
+    add_cifar_images_with_progress(num_images, num_images, output_folder)
