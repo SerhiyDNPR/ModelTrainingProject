@@ -45,6 +45,7 @@ def add_cifar_images(num_images, first_image_index, output_folder="Data"):
         pool.starmap(process_cifar_image, [(args, cifar_dataset, transform, first_image_index, output_folder) for args in args_list])
 
 
+# generates images with a gradient background and UFOs, saving them in the specified output
 def generate_image(index, output_folder="Data"):
 
     image = draw_gradient_background(width, height)
@@ -66,6 +67,7 @@ def generate_image(index, output_folder="Data"):
     with open(label_filename, "w") as f:
         f.write(yolo_label)
 
+#create a folder for the images if it doesn't exist and clear it
 def prepare_data_folder(output_folder="Data"):
     os.makedirs(output_folder, exist_ok=True)
     for filename in os.listdir(output_folder):

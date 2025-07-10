@@ -10,3 +10,4 @@ YoloDataset/
 cifar_data/
 *.7z
 *.pyc
+*.pth
