@@ -11,3 +11,12 @@ cifar_data/
 *.7z
 *.pyc
 *.pth
+*.png
+*.xml
+*instances_val.json
+*instances_train.json
+COCODataSet/
+.gitignore
+*val.cache
+*train.cache
+filters.json

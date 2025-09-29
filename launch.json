@@ -1,0 +1,20 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: main",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/main",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Python: Запустити main.py з папки Validators",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/Validators/main",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        }
+    ]
+}
