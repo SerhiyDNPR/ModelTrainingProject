@@ -42,8 +42,15 @@ def log_stats_callback(trainer):
     після підготовки даних, але до початку навчання.
     """
     print("\nВиклик колбеку для аналізу статистики датасету...")
-    wrapped_dataset = UltralyticsDatasetWrapper(trainer.train_loader.dataset)
-    log_dataset_statistics_to_tensorboard(wrapped_dataset, trainer.writer)
+    
+    # Перевіряємо, чи існує та ініціалізований логгер TensorBoard
+    if hasattr(trainer, 'loggers') and hasattr(trainer.loggers, 'tb'):
+        tensorboard_writer = trainer.loggers.tb
+        wrapped_dataset = UltralyticsDatasetWrapper(trainer.train_loader.dataset)
+        log_dataset_statistics_to_tensorboard(wrapped_dataset, tensorboard_writer)
+        print("✅ Статистику датасету успішно записано в TensorBoard.")
+    else:
+        print("⚠️ TensorBoard логгер не знайдено або не активний. Пропускаємо запис статистики.")
 
 
 class YOLOTrainer(BaseTrainer):

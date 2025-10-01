@@ -43,7 +43,7 @@ class BaseTrainer(ABC):
 
     def _check_for_resume(self, project_path):
         """Перевіряє наявність незавершеного навчання."""
-        train_dirs = sorted(glob(os.path.join(project_path, "train*")))
+        train_dirs = sorted(glob(os.path.join(project_path, "*")))
         if not train_dirs:
             return None, False
         

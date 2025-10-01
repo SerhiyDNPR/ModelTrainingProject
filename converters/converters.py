@@ -4,7 +4,6 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 import stat
 
-# --- ДОДАНО: Функція-обробник помилок для shutil.rmtree ---
 def remove_readonly(func, path, exc_info):
     """
     Обробник помилок для shutil.rmtree, який видаляє прапорець "тільки для читання"
