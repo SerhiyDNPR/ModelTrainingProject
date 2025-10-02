@@ -23,7 +23,8 @@ from Validators.retinanet_wrapper import RetinaNetWrapper
 # --- ОСНОВНІ НАЛАШТУВАННЯ ---
 VIDEO_DIR = r"C:\Users\serhi\OneDrive\CD_DSST\Article_syntetic_data\Data_for_tests\Video_interceptors"
 FILENAME_FILTER = "Зала"
-CLASS_NAMES = ['Zala', 'SuperCum']
+#CLASS_NAMES = ['Zala', 'SuperCum']
+CLASS_NAMES = ['Zala']
 CONF_THRESHOLD = 0.5
 
 MODEL_FACTORIES = {
@@ -74,94 +75,99 @@ def main():
     root = tk.Tk()
     root.withdraw()
 
-    try:
-        num_models = int(input("Скільки моделей ви хочете порівняти? (введіть число): ").strip())
-        if num_models < 1:
-            num_models = 1
-            print("Некоректне значення. Буде використано 1 модель.")
-    except ValueError:
-        num_models = 1
-        print("Некоректний ввід. Буде використано 1 модель.")
-
     loaded_models = []
     model_choices = list(MODEL_FACTORIES.keys())
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Обрано пристрій для обробки: {device.upper()}")
 
-    for i in range(num_models):
-        print(f"\n--- Налаштування Моделі №{i+1} ---")
-        
-        print("Будь ласка, оберіть тип моделі:")
+    # --- START OF MODIFIED LOGIC ---
+    while True:
+        # 1. Проводимо вибір типу моделей
+        print("\n--- Оберіть тип моделей для завантаження ---")
         for j, name in enumerate(model_choices, 1):
             print(f"  {j}: {name}")
         
         try:
-            choice_idx = int(input(f"Ваш вибір для моделі №{i+1}: ")) - 1
-            if not 0 <= choice_idx < len(model_choices): raise ValueError
+            choice_idx = int(input(f"Ваш вибір типу моделі: ")) - 1
+            if not 0 <= choice_idx < len(model_choices):
+                raise ValueError
             model_name = model_choices[choice_idx]
-            print(f"Ви обрали: {model_name}")
+            print(f"✅ Ви обрали тип: {model_name}")
         except (ValueError, IndexError):
-            print("Невірний вибір. Пропуск цієї моделі.")
+            print("❌ Невірний вибір. Спробуйте ще раз.")
             continue
 
-        model_path = filedialog.askopenfilename(
-            title=f"Оберіть файл ваг для {model_name} (.pth або .pt)",
+        # 2. Через діалог завантажуємо файли (дозволено вибір багатьох файлів)
+        model_paths = filedialog.askopenfilenames(
+            title=f"Оберіть ОДИН або БІЛЬШЕ файлів ваг для '{model_name}' (.pth або .pt)",
             filetypes=[("Model files", "*.pth *.pt")]
         )
-        if not model_path:
-            print("Файл моделі не обрано. Пропуск цієї моделі.")
-            continue
-        print(f"Обрано файл ваг: {model_path}")
-
-        # --- CHANGE: Added SAHI option logic ---
-        use_tracker_for_this_model = False
-        use_sahi_for_this_model = False
-
-        if model_name == "YOLOv8":
-            sahi_choice = input(f"Використовувати SAHI (slicing) для моделі '{model_name}'? (y/n): ").strip().lower()
-            if sahi_choice in ['y', 'yes', 'н', 'так']:
-                use_sahi_for_this_model = True
-                use_tracker_for_this_model = False  # Force disable tracker
-                print("✅ Для цієї моделі буде застосовано SAHI. ByteTrack вимкнено, оскільки вони несумісні.")
+        if not model_paths:
+            print("⚠️ Файли моделей не обрано. Вибір типу скасовано.")
+            # 4. Запитуємо, чи хочемо додати ще один тип моделей
+            add_more = input("\nБажаєте додати інший тип моделей? (y/n): ").strip().lower()
+            if add_more not in ['y', 'yes', 'так']:
                 break
+            else:
+                continue
         
-        # Ask about tracker only if SAHI was not selected
-        if not use_sahi_for_this_model:
-            tracker_choice = input(f"Використовувати ByteTrack для моделі '{model_name}'? (y/n): ").strip().lower()
-            if tracker_choice in ['y', 'yes', 'н', 'так']:
-                use_tracker_for_this_model = True
-                print("✅ Для цієї моделі буде застосовано ByteTrack.")
-                break
-            else:
-                use_tracker_for_this_model = False
-                print("☑️ Для цієї моделі буде застосовано звичайну детекцію.")
+        # 3. Відповідно до кількості завантажених файлів, готуємо детектування
+        print(f"🔍 Обрано {len(model_paths)} файлів для типу '{model_name}'. Налаштуйте кожен з них.")
 
-        try:
-            model_wrapper_class = MODEL_FACTORIES[model_name]
-            model_wrapper = model_wrapper_class(class_names=CLASS_NAMES, device=device)
-            
-            # Pass the use_sahi flag to the load method for YOLOv8 ---
+        for model_path in model_paths:
+            print(f"\n--- Налаштування для файлу: {os.path.basename(model_path)} ---")
+
+            use_tracker_for_this_model = False
+            use_sahi_for_this_model = False
+
             if model_name == "YOLOv8":
-                model_wrapper.load(model_path, use_sahi=use_sahi_for_this_model)
-            else:
-                model_wrapper.load(model_path)
+                sahi_choice = input(f"Використовувати SAHI (slicing) для цієї моделі? (y/n): ").strip().lower()
+                if sahi_choice in ['y', 'yes', 'н', 'так']:
+                    use_sahi_for_this_model = True
+                    use_tracker_for_this_model = False
+                    print("✅ Для цієї моделі буде застосовано SAHI. ByteTrack вимкнено, оскільки вони несумісні.")
             
-            filename_no_ext = os.path.splitext(os.path.basename(model_path))[0]
-            
-            loaded_models.append({
-                'name': model_name,               
-                'filename': filename_no_ext,      
-                'wrapper': model_wrapper,
-                'use_tracker': use_tracker_for_this_model 
-            })
-            
-        except Exception as e:
-            print(f"❌ Не вдалося завантажити модель {model_name} з файлу {model_path}. Помилка: {e}")
+            if not use_sahi_for_this_model:
+                tracker_choice = input(f"Використовувати ByteTrack для цієї моделі? (y/n): ").strip().lower()
+                if tracker_choice in ['y', 'yes', 'н', 'так']:
+                    use_tracker_for_this_model = True
+                    print("✅ Для цієї моделі буде застосовано ByteTrack.")
+                else:
+                    use_tracker_for_this_model = False
+                    print("☑️ Для цієї моделі буде застосовано звичайну детекцію.")
+
+            try:
+                model_wrapper_class = MODEL_FACTORIES[model_name]
+                model_wrapper = model_wrapper_class(class_names=CLASS_NAMES, device=device)
+                
+                if model_name == "YOLOv8":
+                    model_wrapper.load(model_path, use_sahi=use_sahi_for_this_model)
+                else:
+                    model_wrapper.load(model_path)
+                
+                filename_no_ext = os.path.splitext(os.path.basename(model_path))[0]
+                
+                loaded_models.append({
+                    'name': model_name,               
+                    'filename': filename_no_ext,      
+                    'wrapper': model_wrapper,
+                    'use_tracker': use_tracker_for_this_model 
+                })
+                
+            except Exception as e:
+                print(f"❌ Не вдалося завантажити модель {model_name} з файлу {model_path}. Помилка: {e}")
+
+        # 4. Запитуємо, чи хочемо додати ще один тип моделей
+        add_more = input("\nБажаєте додати інший тип моделей? (y/n): ").strip().lower()
+        if add_more not in ['y', 'yes', 'так']:
+            break
+    # --- END OF MODIFIED LOGIC ---
 
     if not loaded_models:
-        print("Не завантажено жодної моделі. Вихід.")
+        print("\nНе завантажено жодної моделі. Вихід.")
         return
 
+    # 5. Пропонуємо завантажити файл фільтрів
     initial_filters = load_filters_from_json()
 
     timestamp = dt.datetime.now().strftime("%Y-%m-%d_%H%M%S")
@@ -170,6 +176,7 @@ def main():
 
     window_name = "Multi-Model Validation"
     
+    # 6. Переходимо до аналізу
     processor = VideoProcessor(loaded_models, window_name, CONF_THRESHOLD, initial_filters=initial_filters)
 
     video_files = processor.find_video_files(VIDEO_DIR, FILENAME_FILTER)
