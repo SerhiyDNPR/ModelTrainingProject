@@ -30,33 +30,58 @@ class COCODataConverter:
     
     def get_image_dimensions(self):
         """
-        Швидко знаходить розміри першого знайденого зображення в вихідних даних.
-        Це потрібно, якщо користувач пропускає етап конвертації.
+        Швидко знаходить розміри зображень. Спочатку шукає в конвертованих даних,
+        а якщо їх немає - в вихідних.
         """
-        print("🔍 Визначення розміру зображень з вихідних даних...")
-        source_dirs = [p for p in self.source_dir.glob("solo*") if p.is_dir()]
-        if not source_dirs:
+        print(f"🔍 Визначення розміру зображень з раніше конвертованих даних у '{self.output_dir}'...")
+        
+        try:
+            from PIL import Image
+        except ImportError:
+            print("\n⚠️ ПОПЕРЕДЖЕННЯ: Для визначення розміру з файлу потрібна бібліотека Pillow.")
+            print("   Будь ласка, встановіть її: pip install Pillow")
+            print("   Продовження пошуку у вихідних JSON-файлах...")
+        else:
+            search_dirs = [self.output_dir / "train", self.output_dir / "val"]
+            for directory in search_dirs:
+                if not directory.exists():
+                    continue
+                try:
+                    # Шукаємо перше-ліпше зображення
+                    image_path = next(directory.glob("*.*"))
+                    # Перевіряємо, чи це справді зображення
+                    if image_path.suffix.lower() in ['.png', '.jpg', '.jpeg']:
+                        with Image.open(image_path) as img:
+                            width, height = img.size
+                            print(f"✅ Розмір зображення визначено: {width}x{height} (з файлу {image_path.name})")
+                            return (width, height)
+                except (StopIteration, OSError):
+                    continue
+        
+        print(f"⚠️  Не вдалося знайти зображення в '{self.output_dir}'. Спроба пошуку у вихідних даних...")
+
+        # --- Спроба 2: Пошук у вихідних даних (з JSON) ---
+        source_dirs_list = [p for p in self.source_dir.glob("solo*") if p.is_dir()]
+        if not source_dirs_list:
             print(f"ПОМИЛКА: Не знайдено папок 'solo*' в {self.source_dir}")
             return None
 
-        for directory in source_dirs:
+        for directory in source_dirs_list:
             try:
-                # Шукаємо перший JSON файл з даними кадру
                 frame_data_path = next(directory.glob("sequence.*/step0.frame_data.json"))
                 with open(frame_data_path) as f:
                     frame_data = json.load(f)
                 
-                # Витягуємо розміри
                 capture = frame_data.get("capture") or frame_data.get("captures", [{}])[0]
                 img_w, img_h = capture.get("dimension", [None, None])
 
                 if img_w and img_h:
+                    print(f"✅ Розмір зображення визначено з вихідних даних: {img_w}x{img_h}")
                     return (img_w, img_h)
             except (StopIteration, json.JSONDecodeError, KeyError):
-                # Продовжуємо пошук, якщо в цій папці не знайдено валідних даних
                 continue
         
-        print("⚠️ Не вдалося визначити розмір зображення з вихідних файлів.")
+        print("⚠️ ПОМИЛКА: Не вдалося визначити розмір зображення ані з конвертованих, ані з вихідних файлів.")
         return None
 
 

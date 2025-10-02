@@ -331,26 +331,47 @@ class PascalVOCDataConverter(BaseDataConverter):
 
     def get_image_dimensions(self):
         """
-        Швидко знаходить розміри першого знайденого зображення в вихідних даних.
-        Це потрібно, якщо користувач пропускає етап конвертації.
+        Швидко знаходить розміри зображень. Спочатку шукає в конвертованих даних,
+        а якщо їх немає - в вихідних.
         """
-        print("🔍 Визначення розміру зображень з вихідних даних для PascalVOC...")
-        source_dirs = [p for p in self.source_dir.glob("solo*") if p.is_dir()]
-        if not source_dirs:
+        print(f"🔍 Визначення розміру зображень з раніше конвертованих даних у '{self.output_dir}'...")
+        
+        search_dirs = [
+            self.output_dir / "train",
+            self.output_dir / "val",
+            self.output_dir / "test"
+        ]
+
+        for directory in search_dirs:
+            if not directory.exists():
+                continue
+
+            try:
+                # Шукаємо перше-ліпше зображення (.png або .jpg)
+                image_path = next(directory.glob("*.[jp][pn]g"))
+                with Image.open(image_path) as img:
+                    width, height = img.size
+                    print(f"✅ Розмір зображення визначено: {width}x{height} (з файлу {image_path.name})")
+                    return (width, height)
+            except (StopIteration, OSError):
+                continue
+        
+        print(f"⚠️  Не вдалося знайти зображення в '{self.output_dir}'. Спроба пошуку у вихідних даних...")
+
+        source_dirs_list = [p for p in self.source_dir.glob("solo*") if p.is_dir()]
+        if not source_dirs_list:
             print(f"ПОМИЛКА: Не знайдено папок 'solo*' в {self.source_dir}")
             return None
 
-        for directory in source_dirs:
+        for directory in source_dirs_list:
             try:
-                # Шукаємо перше зображення .png у будь-якій підпапці sequence
                 image_path = next(directory.glob("sequence.*/*.png"))
                 with Image.open(image_path) as img:
                     width, height = img.size
-                    print(f"✅ Розмір зображення визначено: {width}x{height}")
+                    print(f"✅ Розмір зображення визначено з вихідних даних: {width}x{height}")
                     return (width, height)
-            except (StopIteration, FileNotFoundError):
-                # Продовжуємо, якщо в цій папці не знайдено зображень
+            except (StopIteration, FileNotFoundError, OSError):
                 continue
         
-        print("⚠️ Не вдалося визначити розмір зображення з вихідних файлів.")
+        print("⚠️ ПОМИЛКА: Не вдалося визначити розмір зображення ані з конвертованих, ані з вихідних файлів.")
         return None

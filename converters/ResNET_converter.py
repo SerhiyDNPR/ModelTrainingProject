@@ -79,6 +79,65 @@ class ResNetDataConverter(BaseDataConverter):
         }
         return stats
 
+    def get_image_dimensions(self):
+        """
+        Швидко знаходить розміри зображень. Спочатку шукає в конвертованих даних,
+        а якщо їх немає - в вихідних.
+        """
+        # --- Спроба 1: Пошук в конвертованій директорії (швидший спосіб) ---
+        print(f"🔍 Визначення розміру зображень з раніше конвертованих даних у '{self.output_dir}'...")
+        
+        try:
+            from PIL import Image
+        except ImportError:
+            print("\n⚠️ ПОПЕРЕДЖЕННЯ: Для визначення розміру з файлу потрібна бібліотека Pillow.")
+            print("   Будь ласка, встановіть її: pip install Pillow")
+            print("   Продовження пошуку у вихідних JSON-файлах...")
+        else:
+            search_dirs = [
+                self.output_dir / "train",
+                self.output_dir / "val",
+                self.output_dir / "test"
+            ]
+            for directory in search_dirs:
+                if not directory.exists():
+                    continue
+                try:
+                    # Шукаємо перше зображення в будь-якій підпапці класу
+                    image_path = next(directory.glob("*/*.[jp][pn]g"))
+                    with Image.open(image_path) as img:
+                        width, height = img.size
+                        print(f"✅ Розмір зображення визначено: {width}x{height} (з файлу {image_path.name})")
+                        return (width, height)
+                except (StopIteration, OSError):
+                    continue
+        
+        print(f"⚠️  Не вдалося знайти зображення в '{self.output_dir}'. Спроба пошуку у вихідних даних...")
+
+        # --- Спроба 2: Пошук у вихідних даних (з JSON) ---
+        source_dirs_list = [p for p in self.source_dir.glob("solo*") if p.is_dir()]
+        if not source_dirs_list:
+            print(f"ПОМИЛКА: Не знайдено папок 'solo*' в {self.source_dir}")
+            return None
+
+        for directory in source_dirs_list:
+            try:
+                frame_data_path = next(directory.glob("sequence.*/step0.frame_data.json"))
+                with open(frame_data_path) as f:
+                    frame_data = json.load(f)
+                
+                capture = frame_data.get("capture") or frame_data.get("captures", [{}])[0]
+                img_w, img_h = capture.get("dimension", [None, None])
+
+                if img_w and img_h:
+                    print(f"✅ Розмір зображення визначено з вихідних даних: {img_w}x{img_h}")
+                    return (int(img_w), int(img_h))
+            except (StopIteration, json.JSONDecodeError, KeyError):
+                continue
+        
+        print("⚠️ ПОМИЛКА: Не вдалося визначити розмір зображення ані з конвертованих, ані з вихідних файлів.")
+        return None
+
     def _get_image_class_pairs(self, annotated_dirs, negative_dir):
         """Збирає пари (шлях до зображення, назва класу) з усіх джерел."""
         image_class_pairs = []
