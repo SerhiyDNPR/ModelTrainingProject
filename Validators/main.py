@@ -50,10 +50,14 @@ def load_filters_from_json():
     root = tk.Tk()
     root.withdraw()
     
+    root.attributes('-topmost', True)
+    
     filepath = filedialog.askopenfilename(
         title="Оберіть filters.json для завантаження (або скасуйте, щоб почати з нуля)",
         filetypes=[("JSON files", "*.json")]
     )
+    
+    root.attributes('-topmost', False)
     
     if not filepath:
         print("ℹ️ Файл фільтрів не обрано. Створення нових фільтрів з нуля.")
@@ -80,9 +84,7 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Обрано пристрій для обробки: {device.upper()}")
 
-    # --- START OF MODIFIED LOGIC ---
     while True:
-        # 1. Проводимо вибір типу моделей
         print("\n--- Оберіть тип моделей для завантаження ---")
         for j, name in enumerate(model_choices, 1):
             print(f"  {j}: {name}")
@@ -97,21 +99,23 @@ def main():
             print("❌ Невірний вибір. Спробуйте ще раз.")
             continue
 
-        # 2. Через діалог завантажуємо файли (дозволено вибір багатьох файлів)
+        root.attributes('-topmost', True)
+
         model_paths = filedialog.askopenfilenames(
             title=f"Оберіть ОДИН або БІЛЬШЕ файлів ваг для '{model_name}' (.pth або .pt)",
             filetypes=[("Model files", "*.pth *.pt")]
         )
+        
+        root.attributes('-topmost', False)
+        
         if not model_paths:
             print("⚠️ Файли моделей не обрано. Вибір типу скасовано.")
-            # 4. Запитуємо, чи хочемо додати ще один тип моделей
             add_more = input("\nБажаєте додати інший тип моделей? (y/n): ").strip().lower()
             if add_more not in ['y', 'yes', 'так']:
                 break
             else:
                 continue
         
-        # 3. Відповідно до кількості завантажених файлів, готуємо детектування
         print(f"🔍 Обрано {len(model_paths)} файлів для типу '{model_name}'. Налаштуйте кожен з них.")
 
         for model_path in model_paths:
@@ -157,17 +161,14 @@ def main():
             except Exception as e:
                 print(f"❌ Не вдалося завантажити модель {model_name} з файлу {model_path}. Помилка: {e}")
 
-        # 4. Запитуємо, чи хочемо додати ще один тип моделей
         add_more = input("\nБажаєте додати інший тип моделей? (y/n): ").strip().lower()
         if add_more not in ['y', 'yes', 'так']:
             break
-    # --- END OF MODIFIED LOGIC ---
 
     if not loaded_models:
         print("\nНе завантажено жодної моделі. Вихід.")
         return
 
-    # 5. Пропонуємо завантажити файл фільтрів
     initial_filters = load_filters_from_json()
 
     timestamp = dt.datetime.now().strftime("%Y-%m-%d_%H%M%S")
@@ -176,7 +177,6 @@ def main():
 
     window_name = "Multi-Model Validation"
     
-    # 6. Переходимо до аналізу
     processor = VideoProcessor(loaded_models, window_name, CONF_THRESHOLD, initial_filters=initial_filters)
 
     video_files = processor.find_video_files(VIDEO_DIR, FILENAME_FILTER)
