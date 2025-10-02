@@ -148,7 +148,7 @@ class RTDETRUltralyticsTrainer(BaseTrainer):
         # 3. Тепер виклик функції чистий. Всі параметри передаються з одного місця.
         results = model.train(
             data='yolo_config.yaml',
-            imgsz=(480, 640),
+            imgsz=(480, 640), #з практики, так ніби краще
             resume=should_resume,
             **self.params  # Розпаковуємо вже повністю налаштований словник
         )

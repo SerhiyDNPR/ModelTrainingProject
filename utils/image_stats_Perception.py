@@ -57,7 +57,6 @@ class ImageViewer:
         except Exception as e:
             self.ax.text(0.5, 0.5, f"Помилка завантаження:\n{os.path.basename(path)}\n{e}", ha='center', va='center', color='red')
 
-        # --- НОВА ЛОГІКА: ФОРМУВАННЯ РОЗШИРЕНОГО ЗАГОЛОВКА ---
         range_min, range_max = self.selected_range
         
         # Форматуємо інформацію про розміри
