@@ -153,6 +153,10 @@ class YOLOTrainer(BaseTrainer):
         self.params['mosaic'] = 0.0
         print("ℹ️ Аугментацію Mosaic вимкнено для цього сеансу навчання.")
 
+        # Встановлюємо збереження моделі для кожної епохи
+        self.params['save_period'] = 1
+        print("💾 Увімкнено збереження чекпоінту моделі після кожної епохи.")
+
         print("\n🚀 Розпочинаємо тренування моделі...")
         
         # Створюємо ім'я для папки запуску, яке є безпечним для файлової системи
@@ -180,6 +184,9 @@ class YOLOTrainer(BaseTrainer):
              final_path = final_file_name
         
         # Формуємо словник з результатами для логування
+        clean_hyperparams = self.params.copy()
+        clean_hyperparams.pop('save_period', None)
+
         summary = {
             "model_name": self._get_model_name(),
             "image_count": dataset_stats.get("image_count", "N/A"),
@@ -188,6 +195,6 @@ class YOLOTrainer(BaseTrainer):
             "image_size": dataset_stats.get("image_size", "N/A"),
             "best_map": f"{results.results_dict.get('metrics/mAP50-95(B)', 0.0):.4f}",
             "best_model_path": final_path,
-            "hyperparameters": self.params
+            "hyperparameters": clean_hyperparams
         }
         return summary
