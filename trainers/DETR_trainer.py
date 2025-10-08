@@ -181,8 +181,8 @@ class DETRTrainer(BaseTrainer):
         transform = CocoTransform(coco_cat_id_to_model_label)
         train_dataset = CocoDetection(root=train_img_dir, annFile=train_ann_file, transforms=transform)
         val_dataset = CocoDetection(root=val_img_dir, annFile=val_ann_file, transforms=transform)
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=self._collate_fn_detr, num_workers=4, pin_memory=True)
-        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=self._collate_fn_detr, num_workers=4, pin_memory=True)
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=self._collate_fn_detr, num_workers=8, pin_memory=True)
+        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=self._collate_fn_detr, num_workers=8, pin_memory=True)
         return train_loader, val_loader, id2label
     
     def _get_model(self, id2label):
