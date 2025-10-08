@@ -141,8 +141,8 @@ CASCADE_RCNN_TRAIN_PARAMS = {
 
 SSD_TRAIN_PARAMS = {
     'epochs': 30,
-    'batch': 4, # SSD досить вимоглива до пам'яті
-    'accumulation_steps': 4, # 4x4=16 ефективний batch_size
+    'batch': 16, # SSD досить вимоглива до пам'яті
+    'accumulation_steps': 2, # 4x4=16 ефективний batch_size
     'lr': 0.00001,
     'device': 'cuda' if torch.cuda.is_available() else 'cpu',
     'project': 'runs/ssd-vgg16',

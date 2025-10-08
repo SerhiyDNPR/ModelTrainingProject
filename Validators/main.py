@@ -41,6 +41,7 @@ MODEL_FACTORIES = {
     "SSD (VGG16/MobileNetV3)": SSDWrapper
 }
 
+sahi_supported_models = ["YOLOv8", "SSD (VGG16/MobileNetV3)"] # <-- Перевірте, що назва тут ідентична
 
 def setup_gui(window_name, processor):
     """Створює вікно та трекбар."""
@@ -127,7 +128,7 @@ def main():
             use_tracker_for_this_model = False
             use_sahi_for_this_model = False
 
-            if model_name == "YOLOv8":
+            if model_name in sahi_supported_models:
                 sahi_choice = input(f"Використовувати SAHI (slicing) для цієї моделі? (y/n): ").strip().lower()
                 if sahi_choice in ['y', 'yes', 'н', 'так']:
                     use_sahi_for_this_model = True

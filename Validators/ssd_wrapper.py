@@ -5,14 +5,15 @@ import torch
 import torchvision
 from torchvision.transforms import functional as F
 from torchvision.ops import Conv2dNormActivation
+from sahi import AutoDetectionModel
+from sahi.predict import get_sliced_prediction
 
 from .model_wrapper import ModelWrapper
 from .prediction import Prediction
 
 class SSDWrapper(ModelWrapper):
     """
-    Універсальна обгортка для моделей SSD, що підтримує
-    бекбони VGG16 (SSD300) та MobileNetV3 (SSDLite320).
+    Універсальна обгортка для моделей SSD з опціональною підтримкою SAHI.
     """
 
     def _select_backbone(self):
@@ -34,68 +35,78 @@ class SSDWrapper(ModelWrapper):
             else:
                 print("❌ Невірний вибір. Будь ласка, введіть 1 або 2.")
 
-    def load(self, model_path):
+    def load(self, model_path, use_sahi=False):
+        self.use_sahi = use_sahi
         try:
             backbone_type = self._select_backbone()
-            num_classes_with_bg = len(self.class_names) + 1
+            num_classes = len(self.class_names)
             
-            # Створюємо порожню модель з відповідним backbone
-            if backbone_type == 'vgg16':
-                model = torchvision.models.detection.ssd300_vgg16(weights=None)
-            elif backbone_type == 'mobilenet':
-                model = torchvision.models.detection.ssdlite320_mobilenet_v3_large(weights=None)
+            if self.use_sahi:
+                print("✨ SAHI slicing ENABLED. Завантаження моделі через AutoDetectionModel...")
+                self.model = AutoDetectionModel.from_pretrained(
+                    model_type='torchvision', # SAHI має вбудовану підтримку torchvision
+                    model_path=model_path,
+                    config_path=backbone_type, # Передаємо тип бекбону як "конфігурацію"
+                    num_classes=num_classes,
+                    device=self.device,
+                )
             else:
-                print(f"❌ Помилка: невідомий тип backbone '{backbone_type}'.")
-                sys.exit(1)
+                print("✨ SAHI slicing DISABLED. Стандартне завантаження моделі...")
+                if backbone_type == 'vgg16':
+                    model_instance = torchvision.models.detection.ssd300_vgg16(num_classes=num_classes + 1)
+                else: # mobilenet
+                    model_instance = torchvision.models.detection.ssdlite320_mobilenet_v3_large(num_classes=num_classes + 1)
+                
+                state_dict = torch.load(model_path, map_location=self.device).get('model_state_dict', torch.load(model_path, map_location=self.device))
+                model_instance.load_state_dict(state_dict)
+                self.model = model_instance.to(self.device).eval()
 
-            # Коректно замінюємо голову моделі для потрібної кількості класів
-            # Ця логіка враховує різну структуру голів VGG та MobileNet версій
-            in_channels = []
-            for layer in model.head.classification_head.module_list:
-                if isinstance(layer, torch.nn.Sequential) and isinstance(layer[0], Conv2dNormActivation):
-                    in_channels.append(layer[0][0].in_channels)
-                else:
-                    in_channels.append(layer.in_channels)
-            
-            num_anchors = model.anchor_generator.num_anchors_per_location()
-            model.head.classification_head = torchvision.models.detection.ssd.SSDClassificationHead(
-                in_channels, num_anchors, num_classes_with_bg
-            )
-            
-            # Завантажуємо ваги з файлу
-            checkpoint = torch.load(model_path, map_location=self.device)
-            state_dict = checkpoint.get('model_state_dict', checkpoint)
-            model.load_state_dict(state_dict)
-            
-            self.model = model.to(self.device).eval()
             print(f"✅ Модель SSD ({backbone_type.upper()}) '{model_path}' успішно завантажена.")
         except Exception as e:
             print(f"❌ Помилка завантаження моделі SSD: {e}")
             raise
 
     def predict(self, frame, conf_threshold):
-        predictions = []
-        # Конвертація BGR (OpenCV) -> RGB -> Tensor
-        rgb_frame = frame[:, :, ::-1].copy()
-        tensor_frame = F.to_tensor(rgb_frame).to(self.device)
-        
-        with torch.no_grad():
-            results = self.model([tensor_frame])[0]
+        if hasattr(self, 'use_sahi') and self.use_sahi:
+            # Логіка передбачення з нарізкою SAHI
+            self.model.confidence_threshold = conf_threshold
+            
+            result = get_sliced_prediction(
+                frame,
+                detection_model=self.model,
+                slice_height=512,
+                slice_width=512,
+                overlap_height_ratio=0.2,
+                overlap_width_ratio=0.2,
+            )
+            
+            predictions = []
+            for pred in result.object_prediction_list:
+                box = pred.bbox.to_xyxy()
+                score = pred.score.value
+                class_id = pred.category.id
+                class_name = pred.category.name
+                
+                predictions.append(
+                    Prediction(box, score, class_id, class_name, track_id=None)
+                )
+            return predictions
 
-        for box, label, score in zip(results["boxes"], results["labels"], results["scores"]):
-            if score.item() >= conf_threshold:
-                # `label` з torchvision починається з 1 (0 - фон), тому віднімаємо 1
-                class_id = label.item() - 1 
-                if 0 <= class_id < len(self.class_names):
-                    class_name = self.class_names[class_id]
-                    # Моделі з torchvision не підтримують трекінг "з коробки", тому track_id=None
-                    predictions.append(
-                        Prediction(
-                            box.cpu().numpy(),
-                            score.item(),
-                            class_id,
-                            class_name,
-                            track_id=None 
+        else:
+            # Стандартна логіка передбачення без нарізки
+            predictions = []
+            rgb_frame = frame[:, :, ::-1].copy()
+            tensor_frame = F.to_tensor(rgb_frame).to(self.device)
+            
+            with torch.no_grad():
+                results = self.model([tensor_frame])[0]
+
+            for box, label, score in zip(results["boxes"], results["labels"], results["scores"]):
+                if score.item() >= conf_threshold:
+                    class_id = label.item() - 1 
+                    if 0 <= class_id < len(self.class_names):
+                        class_name = self.class_names[class_id]
+                        predictions.append(
+                            Prediction(box.cpu().numpy(), score.item(), class_id, class_name, track_id=None)
                         )
-                    )
-        return predictions
+            return predictions
