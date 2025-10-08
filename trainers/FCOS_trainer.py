@@ -26,7 +26,7 @@ class DetectionTransforms:
         self.transforms = T.Compose(transforms_list)
 
     def __call__(self, image, target):
-        if not target:
+        if not target: # Обробка зображень без анотацій
             transformed_target = {
                 'boxes': torch.empty((0, 4), dtype=torch.float32),
                 'labels': torch.empty(0, dtype=torch.int64)
@@ -36,20 +36,62 @@ class DetectionTransforms:
 
         boxes = [ann['bbox'] for ann in target]
         boxes = torch.tensor(boxes, dtype=torch.float32)
+        # Перетворення з [x, y, width, height] в [x1, y1, x2, y2]
         if boxes.numel() > 0:
-            boxes[:, 2:] += boxes[:, :2]
+            boxes[:, 2:] += boxes[:, :2] 
+        
         labels = torch.tensor([self.cat_id_map[ann['category_id']] for ann in target], dtype=torch.int64)
+        
         transformed_target = { 'boxes': boxes, 'labels': labels }
         image = self.transforms(image)
         return image, transformed_target
 
 # --- Тренер для FCOS ---
 class FCOSTrainer(BaseTrainer):
-    """Керує процесом навчання моделі FCOS."""
+    """Керує процесом навчання моделі FCOS з вибором режиму навчання."""
 
+    def __init__(self, training_params, dataset_dir):
+        super().__init__(training_params, dataset_dir)
+        self.training_mode = None # Зберігатиме обраний режим
+
+    def _get_model_name(self):
+        """Повертає повну назву моделі для логування."""
+        mode_map = {
+            'head_only': 'Fine-tune (Head)',
+            'head_fpn': 'Fine-tune (Head+FPN)',
+            'full': 'Full Training'
+        }
+        mode_str = mode_map.get(self.training_mode, "Unknown Mode")
+        return f"FCOS (ResNet-50) - {mode_str}"
+
+    def _ask_training_mode(self):
+        """Запитує у користувача режим навчання для FCOS."""
+        print("\n   Оберіть режим навчання для FCOS:")
+        print("     1: Fine-tuning (навчати тільки 'голову', найшвидше, рекомендовано для старту)")
+        print("     2: Fine-tuning (навчати 'голову' та FPN, збалансований варіант)")
+        print("     3: Full training (навчати всю модель, найдовше, потенційно найкраща точність)")
+        
+        while True:
+            choice = input("   Ваш вибір режиму (1, 2 або 3): ").strip()
+            if choice == '1':
+                print("✅ Обрано режим: Fine-tuning (тільки 'голова').")
+                return 'head_only'
+            elif choice == '2':
+                print("✅ Обрано режим: Fine-tuning ('голова' + FPN).")
+                return 'head_fpn'
+            elif choice == '3':
+                print("✅ Обрано режим: Full training (вся модель).")
+                return 'full'
+            else:
+                print("   ❌ Невірний вибір. Будь ласка, введіть 1, 2 або 3.")
+    
     def start_or_resume_training(self, dataset_stats):
+        # Запитуємо режим навчання, якщо він ще не встановлений
+        if self.training_mode is None:
+            self.training_mode = self._ask_training_mode()
+
         imgsz = dataset_stats.get('image_size')
-        print("\n--- Запуск тренування для FCOS ---")
+        print(f"\n--- Запуск тренування для {self._get_model_name()} ---")
         
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(f"🔌 Обрано пристрій для навчання: {str(device).upper()}")
@@ -59,7 +101,8 @@ class FCOSTrainer(BaseTrainer):
         else:
             print("⚠️ Розмір зображення (imgsz) не передано, буде використано оригінальний розмір.")
 
-        project_dir = self.params.get('project', 'runs/fcos')
+        # Назва проекту тепер включає режим навчання
+        project_dir = os.path.join(self.params.get('project', 'runs/fcos'), self.training_mode)
         epochs = self.params.get('epochs', 25)
         batch_size = self.params.get('batch', 8)
         learning_rate = self.params.get('lr', 0.0001)
@@ -71,7 +114,7 @@ class FCOSTrainer(BaseTrainer):
         print(f"📊 Знайдено {num_classes} класів. Навчання моделі для їх розпізнавання.")
 
         model = self._get_model(num_classes).to(device)
-        optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)
+        optimizer = optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=learning_rate, weight_decay=1e-4)
         lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=step_size, gamma=gamma)
         
         run_name, checkpoint_path = self._check_for_resume(project_dir)
@@ -119,7 +162,7 @@ class FCOSTrainer(BaseTrainer):
         best_model_path = os.path.join(run_dir, "best_model.pth")
         final_path = None
         if os.path.exists(best_model_path):
-            final_path = f"Final-{self._get_model_name()}-best.pth"
+            final_path = f"Final-{self._get_model_name().replace(' - ', '_')}-best.pth"
             shutil.copy(best_model_path, final_path)
             print(f"\n✅ Найкращу модель скопійовано у файл: {final_path} (mAP: {best_map:.4f})")
 
@@ -141,57 +184,96 @@ class FCOSTrainer(BaseTrainer):
         train_ann_file = os.path.join(self.dataset_dir, 'annotations', 'instances_train.json')
         val_img_dir = os.path.join(self.dataset_dir, 'val')
         val_ann_file = os.path.join(self.dataset_dir, 'annotations', 'instances_val.json')
+        
+        # Визначаємо кількість класів і створюємо мапу
         temp_dataset = CocoDetection(root=train_img_dir, annFile=train_ann_file)
         coco_cat_ids = sorted(temp_dataset.coco.cats.keys())
+        # Створюємо мапу: ID категорії COCO -> наш індекс (0, 1, 2...)
         cat_id_to_label = {cat_id: i for i, cat_id in enumerate(coco_cat_ids)}
         num_classes = len(coco_cat_ids)
+        
         train_dataset = CocoDetection(root=train_img_dir, annFile=train_ann_file, 
                                       transforms=DetectionTransforms(is_train=True, cat_id_map=cat_id_to_label, imgsz=imgsz))
         val_dataset = CocoDetection(root=val_img_dir, annFile=val_ann_file, 
                                     transforms=DetectionTransforms(is_train=False, cat_id_map=cat_id_to_label, imgsz=imgsz))
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn, num_workers=4, pin_memory=True)
-        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn, num_workers=4, pin_memory=True)
+        
+        # Використовуємо num_workers=0 для кращої сумісності (особливо на Windows)
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn, num_workers=0, pin_memory=True)
+        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn, num_workers=0, pin_memory=True)
         return train_loader, val_loader, num_classes
         
     def _get_model(self, num_classes):
-        """Завантажує модель FCOS і адаптує її голову."""
+        """Завантажує модель FCOS, адаптує її голову та налаштовує градієнти."""
+        print(f"🔧 Створення моделі: {self._get_model_name()}")
         model = models.detection.fcos_resnet50_fpn(weights=models.detection.FCOS_ResNet50_FPN_Weights.DEFAULT)
+
+        if self.training_mode == 'head_only':
+            print("❄️ Заморожування backbone та FPN. Навчання тільки 'голови'.")
+            for param in model.backbone.parameters():
+                param.requires_grad = False
+            # FPN є частиною backbone у цій архітектурі, тому він вже заморожений
+            for param in model.head.parameters():
+                param.requires_grad = True # Розморожуємо голову
+        
+        elif self.training_mode == 'head_fpn':
+            print("❄️ Заморожування backbone. Навчання FPN та 'голови'.")
+            # Заморожуємо тільки тіло ResNet, залишаючи FPN розмороженим
+            for name, param in model.backbone.named_parameters():
+                if 'fpn' not in name:
+                    param.requires_grad = False
+            for param in model.head.parameters():
+                param.requires_grad = True
+
+        elif self.training_mode == 'full':
+            print("🔥 Усі ваги моделі розморожено для повного навчання.")
+            for param in model.parameters():
+                param.requires_grad = True
+        
+        # Заміна класифікаційного шару в голові
         in_channels = model.head.classification_head.conv[0].in_channels
-        num_anchors = model.head.classification_head.num_anchors
+        num_anchors = model.head.classification_head.num_anchors # FCOS використовує 1 "анкер" на локацію
         model.head.classification_head.cls_logits = torch.nn.Conv2d(
             in_channels, num_anchors * num_classes, kernel_size=3, stride=1, padding=1
         )
+        # Оновлюємо кількість класів у голові
         model.head.classification_head.num_classes = num_classes
+        
         return model        
 
     def _train_one_epoch(self, model, optimizer, data_loader, device, epoch, writer, global_step):
         model.train()
         progress_bar = tqdm(data_loader, desc=f"Epoch {epoch + 1} [Train]")
         
+        optimizer.zero_grad() # Очищуємо градієнти на початку епохи
+        
         for i, (images, targets) in enumerate(progress_bar):
             images = [img.to(device) for img in images]
             targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+            
             loss_dict = model(images, targets)
             losses = sum(loss for loss in loss_dict.values())
             
             if not torch.isfinite(losses):
-                print(f"⚠️ Виявлено нескінченний loss на епосі {epoch + 1}. Пропускаємо крок. Loss: {losses.item()}")
+                print(f"⚠️ Виявлено нескінченний loss на епосі {epoch + 1}, кроці {i}. Пропускаємо крок. Loss: {losses.item()}")
                 continue
             
-            # Логіка накопичення градієнтів може бути додана тут, якщо потрібно
-            # losses = losses / self.accumulation_steps
-            # losses.backward()
-            # if (i + 1) % self.accumulation_steps == 0:
-            #   optimizer.step()
-            #   optimizer.zero_grad()
-
-            optimizer.zero_grad()
-            losses.backward()
-            optimizer.step()
+            # Логіка накопичення градієнтів
+            if self.accumulation_steps > 1:
+                losses = losses / self.accumulation_steps
             
-            writer.add_scalar('Train/Loss_step', losses.item(), global_step)
-            global_step += 1
+            losses.backward()
+            
+            if (i + 1) % self.accumulation_steps == 0 or (i + 1) == len(data_loader):
+                optimizer.step()
+                optimizer.zero_grad()
+                
+                # Логування втрат після кроку оптимізатора
+                display_loss = losses.item() * self.accumulation_steps if self.accumulation_steps > 1 else losses.item()
+                writer.add_scalar('Train/Loss_step', display_loss, global_step)
+                global_step += 1
+
             progress_bar.set_postfix(loss=losses.item())
+        
         return global_step
 
     def _validate_one_epoch(self, model, data_loader, device):
@@ -202,7 +284,9 @@ class FCOSTrainer(BaseTrainer):
             for images, targets in progress_bar:
                 images = [img.to(device) for img in images]
                 targets_for_metric = [{k: v.to(device) for k, v in t.items()} for t in targets]
+                
                 predictions = model(images)
+                
                 metric.update(predictions, targets_for_metric)
         try:
             mAP_dict = metric.compute()
@@ -211,6 +295,7 @@ class FCOSTrainer(BaseTrainer):
             print(f"Помилка при обчисленні mAP: {e}")
             return 0.0
 
+    # Використовуємо методи з FasterRCNNTrainer для уніфікації
     _check_for_resume = FasterRCNNTrainer._check_for_resume_rcnn
     _save_checkpoint = FasterRCNNTrainer._save_checkpoint
 
