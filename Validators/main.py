@@ -18,6 +18,7 @@ from Validators.fcos_wrapper import FCOSWrapper
 from Validators.rt_detr_ultralytics_wrapper import RTDETRUltralyticsWrapper
 from Validators.mask_rcnn_wrapper import MaskRCNNWrapper
 from Validators.retinanet_wrapper import RetinaNetWrapper
+from Validators.ssd_wrapper import SSDWrapper
 
 
 # --- ОСНОВНІ НАЛАШТУВАННЯ ---
@@ -36,7 +37,8 @@ MODEL_FACTORIES = {
     "FCOS (ResNet50)": FCOSWrapper,
     "RT DETR (Ultralitics)": RTDETRUltralyticsWrapper,
     "Mask R-CNN (ResNet50)": MaskRCNNWrapper,
-    "RetinaNet (ResNet50)": RetinaNetWrapper
+    "RetinaNet (ResNet50)": RetinaNetWrapper,
+    "SSD (VGG16/MobileNetV3)": SSDWrapper
 }
 
 
