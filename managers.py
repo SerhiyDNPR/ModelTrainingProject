@@ -19,6 +19,7 @@ from trainers.RT_DETR_Ultralytics_trainer import RTDETRUltralyticsTrainer
 from trainers.RetinaNet_trainer import RetinaNetTrainer
 from trainers.MaskRCNN_trainer import MaskRCNNTrainer
 from trainers.CascadeRCNN_trainer import CascadeRCNNTrainer
+from trainers.SSDTrainer import SSDTrainer
 
 class TrainingManager:
     """Керує повним циклом: вибір фреймворку, конвертація, навчання."""
@@ -146,6 +147,16 @@ class TrainingManager:
             )
             self.trainer = CascadeRCNNTrainer(
                 training_params=self.config.CASCADE_RCNN_TRAIN_PARAMS,
+                dataset_dir=output_folder
+            )
+        elif self.framework_name == "SSD":
+            output_folder = "PascalVOCDataSet_SSD"
+            self.converter = PascalVOCDataConverter(
+                source_dir=self.config.PERCEPTION_SOURCE_DIR,
+                output_dir=output_folder
+            )
+            self.trainer = SSDTrainer(
+                training_params=self.config.SSD_TRAIN_PARAMS,
                 dataset_dir=output_folder
             )
         else:

@@ -18,7 +18,8 @@ FRAMEWORKS = {
     7: "RT-DETR (Ultralytics)",
     8: "Mask R-CNN",
     9: "RetinaNet",
-    10: "Cascade R-CNN",
+    10: "Cascade R-CNN (NOT IMPLEMENTED)",
+    11: "SSD"
 }
 
 # Параметри для навчання YOLO
@@ -136,4 +137,15 @@ CASCADE_RCNN_TRAIN_PARAMS = {
     'project': 'runs/cascade-rcnn',
     'lr_scheduler_step_size': 8,
     'lr_scheduler_gamma': 0.1,
+}
+
+SSD_TRAIN_PARAMS = {
+    'epochs': 30,
+    'batch': 4, # SSD досить вимоглива до пам'яті
+    'accumulation_steps': 4, # 4x4=16 ефективний batch_size
+    'lr': 0.00001,
+    'device': 'cuda' if torch.cuda.is_available() else 'cpu',
+    'project': 'runs/ssd-vgg16',
+    'lr_scheduler_step_size': 8, # Зменшувати LR кожні 10 епох
+    'lr_scheduler_gamma': 0.1,    # Зменшувати LR в 10 разів
 }
