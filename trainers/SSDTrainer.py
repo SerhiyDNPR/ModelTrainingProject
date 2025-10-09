@@ -166,6 +166,7 @@ class SSDTrainer(BaseTrainer):
         train_loader, val_loader, num_classes = self._prepare_dataloaders(batch_size)
         model = self._get_model(num_classes).to(device)
 
+        #optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
         optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=1e-4)
 
         lr_step_size = self.params.get('lr_scheduler_step_size', 8)
