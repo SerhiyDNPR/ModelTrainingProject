@@ -148,7 +148,7 @@ def main():
                 model_wrapper_class = MODEL_FACTORIES[model_name]
                 model_wrapper = model_wrapper_class(class_names=CLASS_NAMES, device=device)
                 
-                if model_name == "YOLOv8":
+                if model_name in sahi_supported_models:
                     model_wrapper.load(model_path, use_sahi=use_sahi_for_this_model)
                 else:
                     model_wrapper.load(model_path)
