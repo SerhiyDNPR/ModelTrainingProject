@@ -1,10 +1,12 @@
 # Validators/ssd_wrapper.py
 
-import sys
 import torch
 import torchvision
 from torchvision.transforms import functional as F
+from torchvision.models.detection.anchor_utils import DefaultBoxGenerator
+from torchvision.models.detection.ssd import SSDClassificationHead, SSDRegressionHead
 from torchvision.ops import Conv2dNormActivation
+# ---------------------------------------------------------------
 from sahi import AutoDetectionModel
 from sahi.predict import get_sliced_prediction
 
@@ -14,6 +16,7 @@ from .prediction import Prediction
 class SSDWrapper(ModelWrapper):
     """
     Універсальна обгортка для моделей SSD з опціональною підтримкою SAHI.
+    Адаптовано для завантаження моделей, навчених за допомогою SSDTrainer.
     """
 
     def _select_backbone(self):
@@ -35,31 +38,80 @@ class SSDWrapper(ModelWrapper):
             else:
                 print("❌ Невірний вибір. Будь ласка, введіть 1 або 2.")
 
+    def _build_model(self, backbone_type, num_classes):
+        """
+        Створює екземпляр моделі з правильною архітектурою "голови",
+        аналогічно до того, як це робиться в SSDTrainer.
+        """
+        print("🔧 Створення архітектури моделі для завантаження ваг...")
+        # 1. Завантажуємо стандартну модель без перед-навчених ваг
+        if backbone_type == 'vgg16':
+            model = torchvision.models.detection.ssd300_vgg16(weights=None, num_classes=num_classes)
+        else: # mobilenet
+            model = torchvision.models.detection.ssdlite320_mobilenet_v3_large(weights=None, num_classes=num_classes)
+
+        # --- ‼️ ВАЖЛИВО: РОЗКОМЕНТУЙТЕ ТА ВСТАВТЕ ВАШ ГЕНЕРАТОР ЯКОРІВ ТУТ ‼️ ---
+        # Це той самий генератор, що був використаний для навчання моделі.
+        anchor_generator = DefaultBoxGenerator(
+            [
+                # Карта ознак 1 (для найменших об'єктів)
+                [0.045, 0.07, 0.1],
+                # Карта ознак 2 
+                [0.1, 0.18, 0.25],
+                # Карта ознак 3 (для середніх об'єктів)
+                [0.25, 0.4, 0.5],
+                # Карта ознак 4
+                [0.5, 0.6, 0.7],
+                # Карта ознак 5 (для великих об'єктів)
+                [0.7, 0.8, 0.9],
+                # Карта ознак 6 (для найбільших об'єктів)
+                [0.9, 0.93, 0.95] 
+            ]
+        )
+        model.anchor_generator = anchor_generator
+        # -------------------------------------------------------------------------
+        
+        # 2. Витягуємо параметри зі стандартної моделі для побудови нової "голови"
+        in_channels = []
+        for layer in model.head.classification_head.module_list:
+            if isinstance(layer, torch.nn.Sequential) and isinstance(layer[0], ConvdNormActivation):
+                in_channels.append(layer[0][0].in_channels)
+            else:
+                in_channels.append(layer.in_channels)
+        
+        num_anchors = model.anchor_generator.num_anchors_per_location()
+        
+        # 3. Створюємо та встановлюємо нові класифікаційну та регресійну голови
+        model.head.classification_head = SSDClassificationHead(in_channels, num_anchors, num_classes)
+        model.head.regression_head = SSDRegressionHead(in_channels, num_anchors)
+        
+        return model
+
     def load(self, model_path, use_sahi=False):
         self.use_sahi = use_sahi
         try:
             backbone_type = self._select_backbone()
-            num_classes = len(self.class_names)
+            # Кількість класів для "голови" = кількість об'єктів + 1 (фон)
+            num_classes_for_head = len(self.class_names) + 1
             
+            # Створюємо модель з правильною архітектурою
+            model_instance = self._build_model(backbone_type, num_classes_for_head)
+            
+            # Завантажуємо ваги з чекпоінта
+            state_dict = torch.load(model_path, map_location=self.device).get('model_state_dict', torch.load(model_path, map_location=self.device))
+            model_instance.load_state_dict(state_dict)
+            model_instance = model_instance.to(self.device).eval()
+
             if self.use_sahi:
-                print("✨ SAHI slicing ENABLED. Завантаження моделі через AutoDetectionModel...")
+                print("✨ SAHI slicing ENABLED. Ініціалізація AutoDetectionModel з готовою моделлю...")
+                # Передаємо вже повністю готову і завантажену модель в SAHI
                 self.model = AutoDetectionModel.from_pretrained(
-                    model_type='torchvision', # SAHI має вбудовану підтримку torchvision
-                    model_path=model_path,
-                    config_path=backbone_type, # Передаємо тип бекбону як "конфігурацію"
-                    num_classes=num_classes,
+                    model=model_instance,
                     device=self.device,
                 )
             else:
-                print("✨ SAHI slicing DISABLED. Стандартне завантаження моделі...")
-                if backbone_type == 'vgg16':
-                    model_instance = torchvision.models.detection.ssd300_vgg16(num_classes=num_classes + 1)
-                else: # mobilenet
-                    model_instance = torchvision.models.detection.ssdlite320_mobilenet_v3_large(num_classes=num_classes + 1)
-                
-                state_dict = torch.load(model_path, map_location=self.device).get('model_state_dict', torch.load(model_path, map_location=self.device))
-                model_instance.load_state_dict(state_dict)
-                self.model = model_instance.to(self.device).eval()
+                print("✨ SAHI slicing DISABLED. Використовується стандартна модель.")
+                self.model = model_instance
 
             print(f"✅ Модель SSD ({backbone_type.upper()}) '{model_path}' успішно завантажена.")
         except Exception as e:
@@ -84,6 +136,7 @@ class SSDWrapper(ModelWrapper):
             for pred in result.object_prediction_list:
                 box = pred.bbox.to_xyxy()
                 score = pred.score.value
+                # SAHI за замовчуванням нумерує класи з 0, що нам і потрібно
                 class_id = pred.category.id
                 class_name = pred.category.name
                 
@@ -95,6 +148,7 @@ class SSDWrapper(ModelWrapper):
         else:
             # Стандартна логіка передбачення без нарізки
             predictions = []
+            # Конвертація BGR (OpenCV) -> RGB -> Tensor
             rgb_frame = frame[:, :, ::-1].copy()
             tensor_frame = F.to_tensor(rgb_frame).to(self.device)
             
@@ -103,6 +157,7 @@ class SSDWrapper(ModelWrapper):
 
             for box, label, score in zip(results["boxes"], results["labels"], results["scores"]):
                 if score.item() >= conf_threshold:
+                    # Модель повертає мітки від 1 до N. Нам потрібні індекси від 0 до N-1.
                     class_id = label.item() - 1 
                     if 0 <= class_id < len(self.class_names):
                         class_name = self.class_names[class_id]

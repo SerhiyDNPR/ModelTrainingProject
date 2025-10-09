@@ -18,6 +18,7 @@ from DataSetUtils.PascalVOCDataset import PascalVOCDataset
 from trainers.trainers import BaseTrainer, collate_fn, log_dataset_statistics_to_tensorboard
 from torchmetrics.detection import MeanAveragePrecision
 from torch.utils.tensorboard import SummaryWriter
+from torchvision.models.detection.anchor_utils import DefaultBoxGenerator
 
 class SSDTrainer(BaseTrainer):
     """
@@ -87,16 +88,53 @@ class SSDTrainer(BaseTrainer):
         else:
             sys.exit(f"❌ Помилка: невідомий тип конфігурації '{self.model_config}'.")
 
+        model.anchor_generator = DefaultBoxGenerator(
+            [
+                # Карта ознак 1 (для найменших об'єктів)
+                # Покриває розміри ~28-64 пікселів
+                [0.045, 0.07, 0.1],
+                
+                # Карта ознак 2 
+                # Покриває розміри ~64-160 пікселів
+                [0.1, 0.18, 0.25],
+                
+                # Карта ознак 3 (для середніх об'єктів)
+                # Покриває розміри ~160-320 пікселів
+                [0.25, 0.4, 0.5],
+                
+                # Карта ознак 4
+                # Покриває розміри ~320-450 пікселів
+                [0.5, 0.6, 0.7],
+                
+                # Карта ознак 5 (для великих об'єктів)
+                # Покриває розміри ~450-575 пікселів
+                [0.7, 0.8, 0.9],
+                
+                # Карта ознак 6 (для найбільших об'єктів)
+                # Покриває розміри ~575-608 пікселів
+                [0.9, 0.93, 0.95] 
+            ]
+        )
+
         in_channels = []
+        # Цей блок залишається без змін
         for layer in model.head.classification_head.module_list:
             if isinstance(layer, torch.nn.Sequential) and isinstance(layer[0], Conv2dNormActivation):
                 in_channels.append(layer[0][0].in_channels)
             else:
                 in_channels.append(layer.in_channels)
         
+        # Отримуємо кількість якорів з вашого нового генератора
         num_anchors = model.anchor_generator.num_anchors_per_location()
+        
+        # Оновлюємо класифікаційну голову (це у вас вже було)
         model.head.classification_head = models.detection.ssd.SSDClassificationHead(
             in_channels, num_anchors, num_classes)
+            
+        # Створюємо нову регресійну голову, яка відповідає новій кількості якорів
+        model.head.regression_head = models.detection.ssd.SSDRegressionHead(
+            in_channels, num_anchors)
+        # ---------------------------
             
         if is_finetune:
             print("❄️ Заморожування ваг backbone (fine-tuning).")
@@ -114,11 +152,10 @@ class SSDTrainer(BaseTrainer):
         print(f"\n--- Запуск тренування для {self._get_model_name()} ---")
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
+        imgsz = (640, 640)
         if self.model_config.startswith('vgg16'):
-            imgsz = (512, 512)
             project_dir = os.path.join('runs', f'ssd-vgg16{self.model_config.split("vgg16")[-1]}')
         else: # mobilenet
-            imgsz = (512, 512)
             project_dir = os.path.join('runs', f'ssdlite-mobilenet{self.model_config.split("mobilenet")[-1]}')
             
         print(f"🔌 Обрано пристрій: {str(device).upper()}. Розмір зображень: {imgsz[0]}x{imgsz[1]}.")
@@ -128,7 +165,9 @@ class SSDTrainer(BaseTrainer):
 
         train_loader, val_loader, num_classes = self._prepare_dataloaders(batch_size)
         model = self._get_model(num_classes).to(device)
-        optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
+
+        optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=1e-4)
+
         lr_step_size = self.params.get('lr_scheduler_step_size', 8)
         lr_gamma = self.params.get('lr_scheduler_gamma', 0.1)
         scheduler = lr_scheduler.StepLR(optimizer, step_size=lr_step_size, gamma=lr_gamma)
@@ -140,7 +179,6 @@ class SSDTrainer(BaseTrainer):
         os.makedirs(run_dir, exist_ok=True)
         writer = SummaryWriter(log_dir=os.path.join(run_dir, 'tensorboard_logs'))
         
-        # <-- БЛОК TRY...FINALLY для гарантованого запису логів
         try:
             log_dataset_statistics_to_tensorboard(train_loader.dataset, writer)
             print(f"\n🚀 Розпочинаємо тренування на {epochs} епох...")
@@ -159,7 +197,17 @@ class SSDTrainer(BaseTrainer):
                 is_best = val_map > best_map
                 if is_best: best_map = val_map
                 self._save_checkpoint(epoch + 1, model, optimizer, scheduler, best_map, global_step, is_best, run_dir)
-
+                epoch_state = {
+                    'epoch': epoch + 1,
+                    'model_state_dict': model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'scheduler_state_dict': scheduler.state_dict(),
+                    'best_map': best_map,
+                    'global_step': global_step
+                }
+                epoch_ckpt_path = os.path.join(run_dir, f"epoch_{epoch + 1:03d}.pth")
+                torch.save(epoch_state, epoch_ckpt_path)
+                print(f"💾 Збережено ваги поточної епохи: {epoch_ckpt_path}")
         finally:
             # <-- ДОДАНО: Гарантоване закриття writer, навіть при перериванні
             writer.close()
@@ -170,7 +218,7 @@ class SSDTrainer(BaseTrainer):
         label_map_path = os.path.join(self.dataset_dir, 'label_map.txt')
         with open(label_map_path, 'r') as f: class_names = [line.strip() for line in f.readlines()]
         label_map = {name: i+1 for i, name in enumerate(class_names)}
-        num_classes = len(label_map) + 1 
+        num_classes = len(class_names) + 1
         train_dataset = PascalVOCDataset(os.path.join(self.dataset_dir, 'train'), transforms=None, label_map=label_map)
         val_dataset = PascalVOCDataset(os.path.join(self.dataset_dir, 'val'), transforms=None, label_map=label_map)
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
