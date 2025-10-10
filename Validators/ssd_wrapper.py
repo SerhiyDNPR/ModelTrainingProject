@@ -86,14 +86,12 @@ class SSDWrapper(ModelWrapper):
             model_instance.load_state_dict(state_dict)
             model_instance = model_instance.to(self.device).eval()
 
-            # --- ОСЬ ТУТ БУЛА ПОМИЛКА ---
             if self.use_sahi:
                 print("✨ SAHI slicing ENABLED. Ініціалізація AutoDetectionModel з готовою моделлю...")
-                # ПРАВИЛЬНО: передаємо готовий об'єкт моделі, а не шлях
                 self.model = AutoDetectionModel.from_pretrained(
-                    model_type='torchvision',  # <--- КЛЮЧОВИЙ ДОДАНИЙ РЯДОК
+                    model_type='torchvision',  
                     model=model_instance,
-                    category_mapping={i: name for i, name in enumerate(self.class_names)},
+                    category_mapping={str(i + 1): name for i, name in enumerate(self.class_names)},
                     device=self.device,
                 )
             else:
