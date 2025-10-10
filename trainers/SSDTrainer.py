@@ -152,22 +152,30 @@ class SSDTrainer(BaseTrainer):
         print(f"\n--- Запуск тренування для {self._get_model_name()} ---")
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
-        imgsz = (640, 640)
-        if self.model_config.startswith('vgg16'):
-            project_dir = os.path.join('runs', f'ssd-vgg16{self.model_config.split("vgg16")[-1]}')
-        else: # mobilenet
-            project_dir = os.path.join('runs', f'ssdlite-mobilenet{self.model_config.split("mobilenet")[-1]}')
+        imgsz = dataset_stats.get('image_size')
+        if not imgsz:
+            print("❌ Помилка: не вдалося визначити розмір зображення. Переривання.")
+            sys.exit(1)
+
+        # Використовуємо базовий шлях з конфігу і додаємо назву моделі
+        base_project_dir = self.params['project']
+        model_folder_name = self.model_config.replace('_', '-') # vgg16_finetune -> vgg16-finetune
+        project_dir = os.path.join(base_project_dir, model_folder_name)
+        # ----------------------------------------------------
             
         print(f"🔌 Обрано пристрій: {str(device).upper()}. Розмір зображень: {imgsz[0]}x{imgsz[1]}.")
 
-        epochs, batch_size, lr = self.params['epochs'], self.params['batch'], self.params['lr']
+        epochs = self.params['epochs']
+        batch_size = self.params['batch']
+        lr = self.params['lr']
         self.accumulation_steps = self.params.get('accumulation_steps', 1)
-
+        
         train_loader, val_loader, num_classes = self._prepare_dataloaders(batch_size)
         model = self._get_model(num_classes).to(device)
 
-        #optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
-        optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=1e-4)
+        momentum = self.params.get('momentum', 0.9)
+        weight_decay = self.params.get('weight_decay', 1e-4)
+        optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay)
 
         lr_step_size = self.params.get('lr_scheduler_step_size', 8)
         lr_gamma = self.params.get('lr_scheduler_gamma', 0.1)
@@ -210,7 +218,6 @@ class SSDTrainer(BaseTrainer):
                 torch.save(epoch_state, epoch_ckpt_path)
                 print(f"💾 Збережено ваги поточної епохи: {epoch_ckpt_path}")
         finally:
-            # <-- ДОДАНО: Гарантоване закриття writer, навіть при перериванні
             writer.close()
             print("\n🎉 Навчання завершено або перервано. Writer закрито.")
 

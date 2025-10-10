@@ -83,7 +83,8 @@ DEFORMABLE_DETR_TRAIN_PARAMS = {
 # Параметри для навчання FCOS
 FCOS_TRAIN_PARAMS = {
     'epochs': 25,
-    'batch': 8,
+    'batch': 2,
+    'accumulation_steps': 4,
     'lr': 0.0001, # Стандартний 'lr' для оптимізатора AdamW (1e-4)
     'device': 'cuda' if torch.cuda.is_available() else 'cpu',
     'project': 'runs/fcos',
@@ -146,6 +147,11 @@ SSD_TRAIN_PARAMS = {
     'lr': 0.0001,
     'device': 'cuda' if torch.cuda.is_available() else 'cpu',
     'project': 'runs/ssd-vgg16',
+    # --- SGD specific ---
+    'project': 'runs/ssd',  # Базова папка для всіх запусків SSD
+    'momentum': 0.9,        # Параметр для оптимізатора SGD
+    'weight_decay': 1e-3,   # Параметр для оптимізатора SGD
+    # -----------------------
     'lr_scheduler_step_size': 8, # Зменшувати LR кожні 10 епох
     'lr_scheduler_gamma': 0.1,    # Зменшувати LR в 10 разів
 }

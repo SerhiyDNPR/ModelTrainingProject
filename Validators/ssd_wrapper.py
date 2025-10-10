@@ -111,12 +111,15 @@ class SSDWrapper(ModelWrapper):
             model_instance.load_state_dict(state_dict)
             model_instance = model_instance.to(self.device).eval()
 
+            print(f"DEBUG: Тип AutoDetectionModel: {AutoDetectionModel}")
+
             if self.use_sahi:
                 print("✨ SAHI slicing ENABLED. Ініціалізація AutoDetectionModel з готовою моделлю...")
-                # Передаємо вже повністю готову і завантажену модель в SAHI
-                self.model = AutoDetectionModel.from_pretrained(
+                self.model = AutoDetectionModel(
                     model=model_instance,
+                    model_type='torchvision',
                     device=self.device,
+                    class_names=self.class_names,
                 )
             else:
                 print("✨ SAHI slicing DISABLED. Використовується стандартна модель.")
