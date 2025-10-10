@@ -1,6 +1,7 @@
 # Validators/ssd_wrapper.py
 
 import torch
+import os
 import torchvision
 from torchvision.transforms import functional as F
 from torchvision.models.detection.anchor_utils import DefaultBoxGenerator
@@ -44,53 +45,28 @@ class SSDWrapper(ModelWrapper):
         аналогічно до того, як це робиться в SSDTrainer.
         """
         print("🔧 Створення архітектури моделі для завантаження ваг...")
-        # 1. Завантажуємо стандартну модель без перед-навчених ваг
         if backbone_type == 'vgg16':
             model = torchvision.models.detection.ssd300_vgg16(weights=None, num_classes=num_classes)
         else: # mobilenet
             model = torchvision.models.detection.ssdlite320_mobilenet_v3_large(weights=None, num_classes=num_classes)
 
-        # --- ‼️ ВАЖЛИВО: ТУТ  МАЄ БУТИ ТАКИЙ ЖЕ ГЕНЕРАТОР ЯКОРІВ ЯК ПРИ НАВЧАННІ МОДЕЛІ ‼️ ---
+        # --- ВАЖЛИВО: Генератор якорів має бути ідентичним тому, що використовувався при навчанні ---
         model.anchor_generator = DefaultBoxGenerator(
             [
-                # Карта ознак 1 (для найменших об'єктів)
-                # Покриває розміри ~28-64 пікселів
-                [0.045, 0.07, 0.1],
-                
-                # Карта ознак 2 
-                # Покриває розміри ~64-160 пікселів
-                [0.1, 0.18, 0.25],
-                
-                # Карта ознак 3 (для середніх об'єктів)
-                # Покриває розміри ~160-320 пікселів
-                [0.25, 0.4, 0.5],
-                
-                # Карта ознак 4
-                # Покриває розміри ~320-450 пікселів
-                [0.5, 0.6, 0.7],
-                
-                # Карта ознак 5 (для великих об'єктів)
-                # Покриває розміри ~450-575 пікселів
-                [0.7, 0.8, 0.9],
-                
-                # Карта ознак 6 (для найбільших об'єктів)
-                # Покриває розміри ~575-608 пікселів
-                [0.9, 0.93, 0.95] 
+                [0.045, 0.07, 0.1], [0.1, 0.18, 0.25], [0.25, 0.4, 0.5],
+                [0.5, 0.6, 0.7], [0.7, 0.8, 0.9], [0.9, 0.93, 0.95] 
             ]
         )
-        # -------------------------------------------------------------------------
         
-        # 2. Витягуємо параметри зі стандартної моделі для побудови нової "голови"
         in_channels = []
         for layer in model.head.classification_head.module_list:
-            if isinstance(layer, torch.nn.Sequential) and isinstance(layer[0], ConvdNormActivation):
+            if isinstance(layer, torch.nn.Sequential) and isinstance(layer[0], Conv2dNormActivation):
                 in_channels.append(layer[0][0].in_channels)
             else:
                 in_channels.append(layer.in_channels)
         
         num_anchors = model.anchor_generator.num_anchors_per_location()
         
-        # 3. Створюємо та встановлюємо нові класифікаційну та регресійну голови
         model.head.classification_head = SSDClassificationHead(in_channels, num_anchors, num_classes)
         model.head.regression_head = SSDRegressionHead(in_channels, num_anchors)
         
@@ -100,32 +76,31 @@ class SSDWrapper(ModelWrapper):
         self.use_sahi = use_sahi
         try:
             backbone_type = self._select_backbone()
-            # Кількість класів для "голови" = кількість об'єктів + 1 (фон)
             num_classes_for_head = len(self.class_names) + 1
             
-            # Створюємо модель з правильною архітектурою
+            # 1. Створюємо архітектуру моделі
             model_instance = self._build_model(backbone_type, num_classes_for_head)
             
-            # Завантажуємо ваги з чекпоінта
+            # 2. Завантажуємо ваги з чекпоінта
             state_dict = torch.load(model_path, map_location=self.device).get('model_state_dict', torch.load(model_path, map_location=self.device))
             model_instance.load_state_dict(state_dict)
             model_instance = model_instance.to(self.device).eval()
 
-            print(f"DEBUG: Тип AutoDetectionModel: {AutoDetectionModel}")
-
+            # --- ОСЬ ТУТ БУЛА ПОМИЛКА ---
             if self.use_sahi:
                 print("✨ SAHI slicing ENABLED. Ініціалізація AutoDetectionModel з готовою моделлю...")
-                self.model = AutoDetectionModel(
+                # ПРАВИЛЬНО: передаємо готовий об'єкт моделі, а не шлях
+                self.model = AutoDetectionModel.from_pretrained(
+                    model_type='torchvision',  # <--- КЛЮЧОВИЙ ДОДАНИЙ РЯДОК
                     model=model_instance,
-                    model_type='torchvision',
+                    category_mapping={i: name for i, name in enumerate(self.class_names)},
                     device=self.device,
-                    class_names=self.class_names,
                 )
             else:
                 print("✨ SAHI slicing DISABLED. Використовується стандартна модель.")
                 self.model = model_instance
 
-            print(f"✅ Модель SSD ({backbone_type.upper()}) '{model_path}' успішно завантажена.")
+            print(f"✅ Модель SSD ({backbone_type.upper()}) '{os.path.basename(model_path)}' успішно завантажена.")
         except Exception as e:
             print(f"❌ Помилка завантаження моделі SSD: {e}")
             raise
@@ -148,7 +123,6 @@ class SSDWrapper(ModelWrapper):
             for pred in result.object_prediction_list:
                 box = pred.bbox.to_xyxy()
                 score = pred.score.value
-                # SAHI за замовчуванням нумерує класи з 0, що нам і потрібно
                 class_id = pred.category.id
                 class_name = pred.category.name
                 
@@ -160,7 +134,6 @@ class SSDWrapper(ModelWrapper):
         else:
             # Стандартна логіка передбачення без нарізки
             predictions = []
-            # Конвертація BGR (OpenCV) -> RGB -> Tensor
             rgb_frame = frame[:, :, ::-1].copy()
             tensor_frame = F.to_tensor(rgb_frame).to(self.device)
             
@@ -169,7 +142,6 @@ class SSDWrapper(ModelWrapper):
 
             for box, label, score in zip(results["boxes"], results["labels"], results["scores"]):
                 if score.item() >= conf_threshold:
-                    # Модель повертає мітки від 1 до N. Нам потрібні індекси від 0 до N-1.
                     class_id = label.item() - 1 
                     if 0 <= class_id < len(self.class_names):
                         class_name = self.class_names[class_id]
