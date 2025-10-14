@@ -20,6 +20,7 @@ from trainers.RetinaNet_trainer import RetinaNetTrainer
 from trainers.MaskRCNN_trainer import MaskRCNNTrainer
 from trainers.CascadeRCNN_trainer import CascadeRCNNTrainer
 from trainers.SSDTrainer import SSDTrainer
+from trainers.EfficientDet_trainer import EfficientDetTrainer
 
 class TrainingManager:
     """Керує повним циклом: вибір фреймворку, конвертація, навчання."""
@@ -107,6 +108,17 @@ class TrainingManager:
                 training_params=self.config.FCOS_TRAIN_PARAMS,
                 dataset_dir=output_folder
             )
+        elif self.framework_name == "EfficientDet":
+            # EfficientDet, як і FCOS, добре працює з COCO
+            output_folder = "COCODataSet_EfficientDet"
+            self.converter = COCODataConverter(
+                source_dir=self.config.PERCEPTION_SOURCE_DIR,
+                output_dir=output_folder
+            )
+            self.trainer = EfficientDetTrainer(
+                training_params=self.config.EFFICIENTDET_TRAIN_PARAMS,
+                dataset_dir=output_folder
+            )            
         elif self.framework_name == "RT-DETR (Ultralytics)":
             self.converter = YOLODataConverter(
                 source_dir=self.config.PERCEPTION_SOURCE_DIR,

@@ -1,14 +1,19 @@
+# trainers/RetinaNet_trainer.py
+
 import os
 import datetime as dt
-import shutil 
+import shutil
+from glob import glob
 import torch
 import torch.optim as optim
+import torch.optim.lr_scheduler as lr_scheduler
 from torch.utils.data import DataLoader
 import torchvision.transforms as T
 import torchvision.models as models
 from torchvision.datasets import CocoDetection
 from torchvision.models.detection.anchor_utils import AnchorGenerator
 from torchvision.models.detection.retinanet import RetinaNetHead
+from torchvision.models.detection.backbone_utils import BackboneWithFPN
 from tqdm import tqdm
 from trainers.trainers import BaseTrainer, collate_fn, log_dataset_statistics_to_tensorboard
 from torchmetrics.detection import MeanAveragePrecision
@@ -17,44 +22,68 @@ from torch.utils.tensorboard import SummaryWriter
 # Використовуємо той самий клас трансформацій, що і для FCOS
 from trainers.FCOS_trainer import DetectionTransforms
 
+# EfficientNet backbone вимагає бібліотеки timm
+# Встановіть її командою: pip install timm
+try:
+    import timm
+except ImportError:
+    print("Попередження: бібліотеку 'timm' не знайдено. Бекбон EfficientNet буде недоступний.")
+    print("Будь ласка, встановіть її командою: pip install timm")
+    timm = None
+
+
 # --- Тренер для RetinaNet ---
 class RetinaNetTrainer(BaseTrainer):
-    """Керує процесом навчання моделі RetinaNet."""
+    """Керує процесом навчання моделі RetinaNet з вибором backbone та режиму."""
     
     def __init__(self, training_params, dataset_dir):
         super().__init__(training_params, dataset_dir)
-        self.training_mode = None # Буде '_finetune' або '_full'
+        self.training_mode = None
+        self.backbone_type = None
 
-    def _ask_training_mode(self):
-        """Допоміжний метод, що запитує режим навчання (запозичено з FasterRCNNTrainer)."""
+    def _select_configuration(self):
+        """Запитує у користувача backbone та режим навчання для RetinaNet."""
+        print("\n   Оберіть 'хребет' (backbone) для RetinaNet:")
+        print("     1: ResNet-50 (стандартний, збалансований)")
+        print("     2: EfficientNet-B0 (легкий та швидкий)")
+        
+        while self.backbone_type is None:
+            choice = input("   Ваш вибір backbone (1 або 2): ").strip()
+            if choice == '1':
+                self.backbone_type = 'resnet50'
+                print("✅ Обрано backbone: ResNet-50.")
+            elif choice == '2':
+                if timm is None:
+                    print("❌ Помилка: бібліотека 'timm' не встановлена. Оберіть інший backbone.")
+                    continue
+                self.backbone_type = 'efficientnet'
+                print("✅ Обрано backbone: EfficientNet-B0.")
+            else:
+                 print("   ❌ Невірний вибір. Будь ласка, введіть 1 або 2.")
+
         print("\n   Оберіть режим навчання:")
         print("     1: Fine-tuning (навчати тільки 'голову', швидше, рекомендовано)")
         print("     2: Full training (навчати всю модель, довше)")
-        while True:
+        while self.training_mode is None:
             sub_choice = input("   Ваш вибір режиму (1 або 2): ").strip()
             if sub_choice == '1':
-                return '_finetune'
+                self.training_mode = '_finetune'
+                print("✅ Обрано режим: Fine-tuning.")
             elif sub_choice == '2':
-                return '_full'
+                self.training_mode = '_full'
+                print("✅ Обрано режим: Full training.")
             else:
                 print("   ❌ Невірний вибір. Будь ласка, введіть 1 або 2.")
 
-    def _select_training_mode(self):
-        """Запитує у користувача режим навчання для RetinaNet."""
-        print("\nБудь ласка, оберіть режим навчання для RetinaNet (ResNet-50 backbone):")
-        self.training_mode = self._ask_training_mode()
-
     def _get_model_name(self):
-        if not self.training_mode:
-            return "RetinaNet"
+        backbone_str = "ResNet-50" if self.backbone_type == 'resnet50' else "EfficientNet-B0"
         mode_name = "Fine-tune" if self.training_mode == '_finetune' else "Full"
-        return f"RetinaNet (ResNet-50 {mode_name})"
+        return f"RetinaNet ({backbone_str} {mode_name})"
 
     def start_or_resume_training(self, dataset_stats):
-        if self.training_mode is None:
-            self._select_training_mode()
+        if self.training_mode is None or self.backbone_type is None:
+            self._select_configuration()
 
-        # Цей метод побудований за аналогією з FCOSTrainer
         imgsz = dataset_stats.get('image_size')
         print(f"\n--- Запуск тренування для {self._get_model_name()} ---")
         
@@ -64,8 +93,7 @@ class RetinaNetTrainer(BaseTrainer):
         if imgsz:
             print(f"🖼️ Розмір зображень для навчання буде змінено на {imgsz[0]}x{imgsz[1]}.")
 
-        # Динамічна назва проєкту в залежності від режиму
-        project_dir = self.params.get('project', f'runs/retinanet{self.training_mode}')
+        project_dir = os.path.join(self.params.get('project', 'runs/retinanet'), f"{self.backbone_type}{self.training_mode}")
         epochs = self.params.get('epochs', 25)
         batch_size = self.params.get('batch', 8)
         learning_rate = self.params.get('lr', 0.0001)
@@ -81,7 +109,7 @@ class RetinaNetTrainer(BaseTrainer):
         print(f"📊 Знайдено {num_classes} класів. Навчання моделі для їх розпізнавання.")
 
         model = self._get_model(num_classes).to(device)
-        optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)
+        optimizer = optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=learning_rate, weight_decay=1e-4)
         lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=step_size, gamma=gamma)
         
         run_name, checkpoint_path = self._check_for_resume(project_dir)
@@ -128,7 +156,7 @@ class RetinaNetTrainer(BaseTrainer):
         best_model_path = os.path.join(run_dir, "best_model.pth")
         final_path = None
         if os.path.exists(best_model_path):
-            final_path = f"Final-{self._get_model_name()}-best.pth"
+            final_path = f"Final-{self._get_model_name().replace(' (', '_').replace(')', '')}-best.pth"
             shutil.copy(best_model_path, final_path)
             print(f"\n✅ Найкращу модель скопійовано у файл: {final_path} (mAP: {best_map:.4f})")
 
@@ -157,49 +185,59 @@ class RetinaNetTrainer(BaseTrainer):
                                       transforms=DetectionTransforms(is_train=True, cat_id_map=cat_id_to_label, imgsz=imgsz))
         val_dataset = CocoDetection(root=val_img_dir, annFile=val_ann_file, 
                                     transforms=DetectionTransforms(is_train=False, cat_id_map=cat_id_to_label, imgsz=imgsz))
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn, num_workers=8, pin_memory=True)
-        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn, num_workers=8, pin_memory=True)
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn, num_workers=0, pin_memory=True)
+        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn, num_workers=0, pin_memory=True)
         return train_loader, val_loader, num_classes
         
     def _get_model(self, num_classes):
-        """Завантажує модель RetinaNet, адаптує її голову та заморожує ваги backbone, якщо потрібно."""
+        """Завантажує модель RetinaNet, адаптує її голову та заморожує ваги, якщо потрібно."""
         print(f"🔧 Створення моделі: {self._get_model_name()}")
-        model = models.detection.retinanet_resnet50_fpn_v2(weights=models.detection.RetinaNet_ResNet50_FPN_V2_Weights.DEFAULT)
-        
-        # Заморожування ваг backbone в режимі fine-tuning
+
+        if self.backbone_type == 'efficientnet':
+             # Створюємо EfficientNet backbone з FPN за допомогою timm
+            backbone_timm = timm.create_model(
+                'efficientnet_b0', features_only=True, 
+                out_indices=(2, 3, 4), pretrained=True
+            )
+            backbone = BackboneWithFPN(
+                backbone_timm,
+                # Словник, що вказує, які шари backbone використовувати для FPN
+                return_layers={'p2': '0', 'p3': '1', 'p4': '2'},
+                in_channels_list=backbone_timm.feature_info.channels(),
+                out_channels=256
+            )
+            # Створюємо модель RetinaNet з кастомним backbone
+            anchor_generator = models.detection.anchor_utils.AnchorGenerator(
+                sizes=tuple([(x, int(x * 2 ** (1.0 / 3)), int(x * 2 ** (2.0 / 3))) for x in [32, 64, 128, 256, 512]]),
+                aspect_ratios=tuple([(0.5, 1.0, 2.0)] * 5)
+            )
+            model = models.detection.RetinaNet(backbone, num_classes=num_classes, anchor_generator=anchor_generator)
+        else: # 'resnet50'
+            model = models.detection.retinanet_resnet50_fpn_v2(weights=models.detection.RetinaNet_ResNet50_FPN_V2_Weights.DEFAULT)
+
+        # --- Заморожування ваг ---
         if self.training_mode == '_finetune':
-            print("❄️ Заморожування ваг backbone. Навчання тільки 'голови' (fine-tuning).")
+            print("❄️ Заморожування ваг backbone. Навчання тільки 'голови'.")
             for param in model.backbone.parameters():
                 param.requires_grad = False
         else:
-            print("🔥 Усі ваги моделі розморожено для повного навчання (full training).")
+            print("🔥 Усі ваги моделі розморожено для повного навчання.")
+            for param in model.parameters():
+                param.requires_grad = True
 
-        anchor_generator = model.anchor_generator
-        if isinstance(anchor_generator, AnchorGenerator):
-            num_anchors = anchor_generator.num_anchors_per_location()[0]
-        else:
-            num_anchors = 9 
-
-        in_channels = 256
-        
-        new_head = RetinaNetHead(
-            in_channels=in_channels,
-            num_anchors=num_anchors,
-            num_classes=num_classes
-        )
-
-        for module in new_head.children():
-            if hasattr(module, "cls_logits"):
-                torch.nn.init.constant_(module.cls_logits.bias, -4.595)
-
-        model.head = new_head
+        # --- Адаптація голови (тільки для ResNet, для EfficientNet вона вже правильна) ---
+        if self.backbone_type == 'resnet50':
+            num_anchors = model.head.classification_head.num_anchors
+            in_channels = 256 # FPN out channels
+            new_head = RetinaNetHead(in_channels, num_anchors, num_classes)
+            model.head = new_head
         
         return model        
 
     def _train_one_epoch(self, model, optimizer, data_loader, device, epoch, writer, global_step):
         model.train()
         progress_bar = tqdm(data_loader, desc=f"Epoch {epoch + 1} [Train]")
-        optimizer.zero_grad() # Обнуляємо градієнти один раз на початку епохи
+        optimizer.zero_grad() 
 
         for i, (images, targets) in enumerate(progress_bar):
             images = [img.to(device) for img in images]
@@ -212,25 +250,20 @@ class RetinaNetTrainer(BaseTrainer):
                 print(f"⚠️ Виявлено нескінченний loss на кроці {i}. Пропускаємо.")
                 continue
 
-            # Масштабуємо loss, щоб усереднити градієнти
             if self.accumulation_steps > 1:
                 losses = losses / self.accumulation_steps
             
             losses.backward()
             
-            # Оновлюємо ваги та обнуляємо градієнти кожні N кроків
             if (i + 1) % self.accumulation_steps == 0 or (i + 1) == len(data_loader):
                 optimizer.step()
                 optimizer.zero_grad()
 
-                # Логуємо в TensorBoard тільки коли модель фактично оновилася
-                # Повертаємо loss до оригінального масштабу для коректного логування
                 original_loss = losses.item() * self.accumulation_steps if self.accumulation_steps > 1 else losses.item()
                 writer.add_scalar('Train/Loss_step', original_loss, global_step)
                 global_step += 1
                 progress_bar.set_postfix(loss=original_loss)
             else:
-                 # Оновлюємо progress bar навіть на проміжних кроках для кращого фідбеку
                 original_loss = losses.item() * self.accumulation_steps if self.accumulation_steps > 1 else losses.item()
                 progress_bar.set_postfix(loss=original_loss)
 
@@ -253,12 +286,10 @@ class RetinaNetTrainer(BaseTrainer):
             print(f"Помилка при обчисленні mAP: {e}")
             return 0.0
 
-    # Використовуємо _check_for_resume та _save_checkpoint від FasterRCNN
     from trainers.FasterRCNNTrainer import FasterRCNNTrainer
     _check_for_resume = FasterRCNNTrainer._check_for_resume_rcnn
     _save_checkpoint = FasterRCNNTrainer._save_checkpoint
 
-    # АЛЕ визначаємо власний _load_checkpoint, що підтримує lr_scheduler
     def _load_checkpoint(self, path, model, optimizer, device, lr_scheduler=None):
         checkpoint = torch.load(path, map_location=device)
         model.load_state_dict(checkpoint['model_state_dict'])
