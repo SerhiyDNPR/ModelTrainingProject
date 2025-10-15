@@ -47,11 +47,16 @@ def main():
     root = tk.Tk()
     root.withdraw() # Ховаємо головне вікно tkinter
 
+    root.attributes('-topmost', True)
+
     # 1. Вибір файлу моделі
     model_path = filedialog.askopenfilename(
         title="Оберіть файл моделі (.pt)",
         filetypes=[("PyTorch Models", "*.pt")]
     )
+
+    root.attributes('-topmost', False)
+
     if not model_path:
         print("Модель не обрано. Роботу завершено.")
         return

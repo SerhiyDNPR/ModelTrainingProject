@@ -174,7 +174,7 @@ def check_for_unfinished_training():
     if os.path.exists(last_model_path):
         print(f"\n✅ Виявлено незавершене навчання: {last_train_dir}")
         answer = input("Бажаєте продовжити навчання з останньої точки збереження? (y/n): ").strip().lower()
-        if answer not in ['y', 'yes', 'н', 'так']:
+        if answer not in ['y', 'Y', 'н', 'Н']:
             print(f"🚀 Навчання буде продовжено з файлу: {last_model_path}")
             return last_model_path
         else:
@@ -185,7 +185,7 @@ def check_for_unfinished_training():
 def add_hard_negatives(dataset_dir):
     """Додає 'складні негативні' приклади до тренувальної вибірки."""
     answer = input("\nБажаєте додати Hard Negative приклади до навчальної вибірки? (y/n): ").strip().lower()
-    if answer not in ['y', 'yes', 'н', 'так']:
+    if answer not in ['y', 'Y', 'н', 'Н']:
         print("Пропускаємо додавання Hard Negative прикладів.")
         return
 
@@ -217,7 +217,7 @@ if __name__ == '__main__':
     final_dataset_dir = "YoloDataset"
 
     do_conversion = input("Бажаєте запустити конвертацію даних з Unity Perception? (y/n): ").strip().lower()
-    if do_conversion in ['y', 'yes', 'н', 'так']:
+    if do_conversion in ['y', 'Y', 'н', 'Н']:
         if not os.path.isdir(perception_source_dir):
             print(f"ПОМИЛКА: Вказаний шлях до даних Perception '{perception_source_dir}' не існує.")
             exit(1)

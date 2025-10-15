@@ -270,7 +270,7 @@ class PascalVOCDataConverter(BaseDataConverter):
     def _add_hard_negatives_rcnn(self):
         """Додає 'складні негативні' приклади з окремої папки до всіх вибірок."""
         answer = input("\nБажаєте додати Hard Negative приклади з окремої папки? (y/n): ").strip().lower()
-        if answer not in ['y', 'yes', 'н', 'так']:
+        if answer not in ['y', 'Y', 'н', 'Н']:
             print("Пропускаємо додавання Hard Negative прикладів.")
             return
 

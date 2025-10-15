@@ -114,7 +114,7 @@ def main():
         if not model_paths:
             print("⚠️ Файли моделей не обрано. Вибір типу скасовано.")
             add_more = input("\nБажаєте додати інший тип моделей? (y/n): ").strip().lower()
-            if add_more in ['y', 'yes', 'так', 'т']:
+            if add_more in ['y', 'Y', 'н', 'Н']:
                 continue
             else:
                 break
@@ -130,14 +130,14 @@ def main():
 
             if model_name in sahi_supported_models:
                 sahi_choice = input(f"Використовувати SAHI (slicing) для цієї моделі? (y/n): ").strip().lower()
-                if sahi_choice in ['y', 'yes', 'н', 'так']:
+                if sahi_choice in [['y', 'Y', 'н', 'Н']:
                     use_sahi_for_this_model = True
                     use_tracker_for_this_model = False
                     print("✅ Для цієї моделі буде застосовано SAHI. ByteTrack вимкнено, оскільки вони несумісні.")
             
             if not use_sahi_for_this_model:
                 tracker_choice = input(f"Використовувати ByteTrack для цієї моделі? (y/n): ").strip().lower()
-                if tracker_choice in ['y', 'yes', 'н', 'так']:
+                if tracker_choice in ['y', 'Y', 'н', 'Н']:
                     use_tracker_for_this_model = True
                     print("✅ Для цієї моделі буде застосовано ByteTrack.")
                 else:

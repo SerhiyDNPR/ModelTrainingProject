@@ -215,7 +215,7 @@ Hyperparameters:
 
         dataset_stats = {}
         do_conversion = input("\nБажаєте запустити конвертацію даних? (y/n): ").strip().lower()
-        if do_conversion in ['y', 'yes', 'н', 'так']:
+        if do_conversion in ['y', 'Y', 'н', 'Н']:
             # Конвертери тепер мають повертати словник зі статистикою
             dataset_stats = self.converter.prepare_data()
         else:

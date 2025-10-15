@@ -210,7 +210,7 @@ class ResNetDataConverter(BaseDataConverter):
     def _add_hard_negatives_resnet(self):
         """Додає 'складні негативні' приклади до тренувальної вибірки."""
         answer = input("\nБажаєте додати Hard Negative приклади до навчальної вибірки? (y/n): ").strip().lower()
-        if answer not in ['y', 'yes', 'н', 'так']:
+        if answer not in ['y', 'Y', 'н', 'Н']:
             print("Пропускаємо додавання Hard Negative прикладів.")
             return
 

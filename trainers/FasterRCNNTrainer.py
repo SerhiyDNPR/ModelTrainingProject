@@ -319,7 +319,7 @@ class FasterRCNNTrainer(BaseTrainer):
         if os.path.exists(last_model_path):
             print(f"\n✅ Виявлено незавершене навчання: {last_train_dir}")
             answer = input("Бажаєте продовжити навчання з останньої точки збереження? (y/n): ").strip().lower()
-            if answer in ['y', 'yes', 'н', 'так']:
+            if answer in ['y', 'Y', 'н', 'Н']:
                 print(f"🚀 Навчання буде продовжено з файлу: {last_model_path}")
                 return os.path.basename(last_train_dir), last_model_path
         

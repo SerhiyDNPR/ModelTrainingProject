@@ -271,7 +271,7 @@ class SSDTrainer(BaseTrainer):
         last_ckpt = os.path.join(last_dir, "last_checkpoint.pth")
         if os.path.exists(last_ckpt):
             print(f"\n✅ Виявлено незавершене навчання: {last_dir}")
-            if input("Бажаєте продовжити? (y/n): ").strip().lower() in ['y', 'yes', 'так', 'н']:
+            if input("Бажаєте продовжити? (y/n): ").strip().lower() in ['y', 'Y', 'н', 'Н']:
                 return os.path.basename(last_dir), last_ckpt
         return f'train_{dt.datetime.now().strftime("%Y%m%d_%H%M%S")}', None
     
