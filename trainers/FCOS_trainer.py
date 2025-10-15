@@ -24,6 +24,18 @@ except ImportError:
     print("Будь ласка, встановіть її командою: pip install timm")
     timm = None
 
+# Словник з конфігураціями backbone: назва, рекомендований розмір (ширина, висота) та опис
+BACKBONE_CONFIGS = {
+    '1': ('resnet50', (800, 800), "ResNet-50 (стандартний, збалансований)"),
+    '2': ('tf_efficientdet_d0', (512, 512), "EfficientDet-D0 (найлегший)"),
+    '3': ('tf_efficientdet_d1', (640, 640), "EfficientDet-D1 (кращий баланс швидкість/точність)"),
+    '4': ('tf_efficientdet_d2', (768, 768), "EfficientDet-D2"),
+    '5': ('tf_efficientdet_d3', (896, 896), "EfficientDet-D3"),
+    '6': ('tf_efficientdet_d4', (1024, 1024), "EfficientDet-D4"),
+    '7': ('tf_efficientdet_d5', (1280, 1280), "EfficientDet-D5 (вища точність, повільніший)"),
+    '8': ('tf_efficientdet_d6', (1536, 1536), "EfficientDet-D6"),
+    '9': ('tf_efficientdet_d7', (1536, 1536), "EfficientDet-D7 (найвища точність)"),
+}
 
 # --- Допоміжний клас для трансформацій ---
 class DetectionTransforms:
@@ -31,6 +43,7 @@ class DetectionTransforms:
         self.cat_id_map = cat_id_map
         transforms_list = []
         if imgsz:
+            # imgsz це (ширина, висота), а T.Resize очікує (висота, ширина)
             height, width = imgsz[1], imgsz[0]
             transforms_list.append(T.Resize((height, width)))
         transforms_list.append(T.ToTensor())
@@ -63,44 +76,47 @@ class FCOSTrainer(BaseTrainer):
 
     def __init__(self, training_params, dataset_dir):
         super().__init__(training_params, dataset_dir)
-        self.training_mode = None # Зберігатиме обраний режим
+        self.training_mode = None
         self.backbone_type = None
+        self.image_size = None
 
     def _get_model_name(self):
         """Повертає повну назву моделі для логування."""
-        backbone_map = {'resnet50': 'ResNet-50', 'efficientnet': 'EfficientNet-B0'}
+        if not self.backbone_type:
+            return "FCOS"
+            
+        backbone_str = "ResNet-50"
+        if 'efficientdet' in self.backbone_type:
+            backbone_str = self.backbone_type.replace('tf_efficientdet_d', 'EfficientDet-D')
+        
         mode_map = {
             'head_only': 'Fine-tune (Head)',
             'head_fpn': 'Fine-tune (Head+FPN)',
             'full': 'Full Training'
         }
-        backbone_str = backbone_map.get(self.backbone_type, "Unknown Backbone")
         mode_str = mode_map.get(self.training_mode, "Unknown Mode")
         return f"FCOS ({backbone_str}) - {mode_str}"
 
     def _select_configuration(self):
         """Запитує у користувача backbone та режим навчання для FCOS."""
         print("\n   Оберіть 'хребет' (backbone) для FCOS:")
-        print("     1: ResNet-50 (стандартний, збалансований)")
-        print("     2: EfficientNet-B0 (легкий та швидкий)")
+        for key, (_, _, description) in BACKBONE_CONFIGS.items():
+            print(f"     {key}: {description}")
 
         while self.backbone_type is None:
-            choice = input("   Ваш вибір backbone (1 або 2): ").strip()
-            if choice == '1':
-                self.backbone_type = 'resnet50'
-                print("✅ Обрано backbone: ResNet-50.")
-            elif choice == '2':
-                if timm is None:
+            choice = input(f"   Ваш вибір backbone (1-{len(BACKBONE_CONFIGS)}): ").strip()
+            if choice in BACKBONE_CONFIGS:
+                self.backbone_type, self.image_size, desc = BACKBONE_CONFIGS[choice]
+                print(f"✅ Обрано backbone: {desc.split(' (')[0]} з розміром зображення {self.image_size}")
+                if 'efficientdet' in self.backbone_type and timm is None:
                     print("❌ Помилка: бібліотека 'timm' не встановлена. Оберіть інший backbone.")
+                    self.backbone_type = None # Скидаємо вибір
                     continue
-                self.backbone_type = 'efficientnet'
-                print("✅ Обрано backbone: EfficientNet-B0.")
             else:
-                print("   ❌ Невірний вибір. Будь ласка, введіть 1 або 2.")
+                print(f"   ❌ Невірний вибір. Будь ласка, введіть число від 1 до {len(BACKBONE_CONFIGS)}.")
 
         print("\n   Оберіть режим навчання для FCOS:")
         print("     1: Fine-tuning (навчати тільки 'голову', найшвидше, рекомендовано для старту)")
-        # Для EfficientNet заморожування FPN окремо не має сенсу, бо він є частиною backbone.
         if self.backbone_type == 'resnet50':
              print("     2: Fine-tuning (навчати 'голову' та FPN, збалансований варіант)")
         print("     3: Full training (навчати всю модель, найдовше, потенційно найкраща точність)")
@@ -121,22 +137,17 @@ class FCOSTrainer(BaseTrainer):
                 print(f"   ❌ Невірний вибір. Будь ласка, введіть один з варіантів: {prompt_options}.")
 
     def start_or_resume_training(self, dataset_stats):
-        # Запитуємо конфігурацію, якщо вона ще не встановлена
         if self.training_mode is None or self.backbone_type is None:
             self._select_configuration()
 
-        imgsz = dataset_stats.get('image_size')
+        imgsz = self.image_size
         print(f"\n--- Запуск тренування для {self._get_model_name()} ---")
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(f"🔌 Обрано пристрій для навчання: {str(device).upper()}")
 
-        if imgsz:
-            print(f"🖼️ Розмір зображень для навчання буде змінено на {imgsz[0]}x{imgsz[1]}.")
-        else:
-            print("⚠️ Розмір зображення (imgsz) не передано, буде використано оригінальний розмір.")
+        print(f"🖼️ Розмір зображень для навчання буде змінено на {imgsz[0]}x{imgsz[1]}.")
 
-        # Назва проекту тепер включає backbone та режим навчання
         project_dir = os.path.join(self.params.get('project', 'runs/fcos'), f"{self.backbone_type}_{self.training_mode}")
         epochs = self.params.get('epochs', 25)
         batch_size = self.params.get('batch', 8)
@@ -206,7 +217,7 @@ class FCOSTrainer(BaseTrainer):
             "image_count": dataset_stats.get("image_count", "N/A"),
             "negative_count": dataset_stats.get("negative_count", "N/A"),
             "class_count": dataset_stats.get("class_count", num_classes),
-            "image_size": dataset_stats.get("image_size", "N/A"),
+            "image_size": self.image_size,
             "best_map": f"{best_map:.4f}",
             "best_model_path": final_path,
             "hyperparameters": self.params
@@ -220,10 +231,8 @@ class FCOSTrainer(BaseTrainer):
         val_img_dir = os.path.join(self.dataset_dir, 'val')
         val_ann_file = os.path.join(self.dataset_dir, 'annotations', 'instances_val.json')
 
-        # Визначаємо кількість класів і створюємо мапу
         temp_dataset = CocoDetection(root=train_img_dir, annFile=train_ann_file)
         coco_cat_ids = sorted(temp_dataset.coco.cats.keys())
-        # Створюємо мапу: ID категорії COCO -> наш індекс (0, 1, 2...)
         cat_id_to_label = {cat_id: i for i, cat_id in enumerate(coco_cat_ids)}
         num_classes = len(coco_cat_ids)
 
@@ -232,7 +241,6 @@ class FCOSTrainer(BaseTrainer):
         val_dataset = CocoDetection(root=val_img_dir, annFile=val_ann_file,
                                     transforms=DetectionTransforms(is_train=False, cat_id_map=cat_id_to_label, imgsz=imgsz))
 
-        # Використовуємо num_workers=0 для кращої сумісності (особливо на Windows)
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn, num_workers=0, pin_memory=True)
         val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn, num_workers=0, pin_memory=True)
         return train_loader, val_loader, num_classes
@@ -241,23 +249,20 @@ class FCOSTrainer(BaseTrainer):
         """Завантажує модель FCOS, адаптує її голову та налаштовує градієнти."""
         print(f"🔧 Створення моделі: {self._get_model_name()}")
 
-        if self.backbone_type == 'efficientnet':
+        if 'efficientdet' in self.backbone_type:
             backbone_timm = timm.create_model(
-                'efficientnet_b0',
+                self.backbone_type,
                 features_only=True,
                 out_indices=(2, 3, 4),
                 pretrained=True
             )
             in_channels_list = backbone_timm.feature_info.channels()
             
-            # FCOS очікує 5 виходів з FPN, а efficientnet_b0 з out_indices=(2,3,4) дає 3.
-            # Для сумісності, потрібно щоб FPN генерував 5 рівнів.
-            # Використовуємо 'extra_blocks' для створення додаткових рівнів P6, P7.
             backbone = BackboneWithFPN(
                 backbone_timm,
-                return_layers={'2': '0', '3': '1', '4': '2'}, # Мапуємо шари timm на FPN
+                return_layers={'2': '0', '3': '1', '4': '2'},
                 in_channels_list=in_channels_list,
-                out_channels=256, # Стандартна кількість каналів на виході FPN
+                out_channels=256,
                 extra_blocks=models.detection.fpn.LastLevelP6P7(256, 256)
             )
             model = models.detection.FCOS(backbone, num_classes=num_classes)
@@ -284,13 +289,11 @@ class FCOSTrainer(BaseTrainer):
             for param in model.parameters():
                 param.requires_grad = True
 
-        # Заміна класифікаційного шару в голові
         in_channels = model.head.classification_head.conv[0].in_channels
-        num_anchors = model.head.classification_head.num_anchors # FCOS використовує 1 "анкер" на локацію
+        num_anchors = model.head.classification_head.num_anchors
         model.head.classification_head.cls_logits = torch.nn.Conv2d(
             in_channels, num_anchors * num_classes, kernel_size=3, stride=1, padding=1
         )
-        # Оновлюємо кількість класів у голові
         model.head.classification_head.num_classes = num_classes
 
         return model
@@ -298,8 +301,7 @@ class FCOSTrainer(BaseTrainer):
     def _train_one_epoch(self, model, optimizer, data_loader, device, epoch, writer, global_step):
         model.train()
         progress_bar = tqdm(data_loader, desc=f"Epoch {epoch + 1} [Train]")
-
-        optimizer.zero_grad() # Очищуємо градієнти на початку епохи
+        optimizer.zero_grad()
 
         for i, (images, targets) in enumerate(progress_bar):
             images = [img.to(device) for img in images]
@@ -312,23 +314,17 @@ class FCOSTrainer(BaseTrainer):
                 print(f"⚠️ Виявлено нескінченний loss на епосі {epoch + 1}, кроці {i}. Пропускаємо крок. Loss: {losses.item()}")
                 continue
 
-            # Логіка накопичення градієнтів
             if self.accumulation_steps > 1:
                 losses = losses / self.accumulation_steps
-
             losses.backward()
 
             if (i + 1) % self.accumulation_steps == 0 or (i + 1) == len(data_loader):
                 optimizer.step()
                 optimizer.zero_grad()
-
-                # Логування втрат після кроку оптимізатора
                 display_loss = losses.item() * self.accumulation_steps if self.accumulation_steps > 1 else losses.item()
                 writer.add_scalar('Train/Loss_step', display_loss, global_step)
                 global_step += 1
-
             progress_bar.set_postfix(loss=losses.item())
-
         return global_step
 
     def _validate_one_epoch(self, model, data_loader, device):
@@ -339,9 +335,7 @@ class FCOSTrainer(BaseTrainer):
             for images, targets in progress_bar:
                 images = [img.to(device) for img in images]
                 targets_for_metric = [{k: v.to(device) for k, v in t.items()} for t in targets]
-
                 predictions = model(images)
-
                 metric.update(predictions, targets_for_metric)
         try:
             mAP_dict = metric.compute()
@@ -350,7 +344,6 @@ class FCOSTrainer(BaseTrainer):
             print(f"Помилка при обчисленні mAP: {e}")
             return 0.0
 
-    # Використовуємо методи з FasterRCNNTrainer для уніфікації
     _check_for_resume = FasterRCNNTrainer._check_for_resume_rcnn
     _save_checkpoint = FasterRCNNTrainer._save_checkpoint
 
