@@ -19,7 +19,7 @@ from Validators.rt_detr_ultralytics_wrapper import RTDETRUltralyticsWrapper
 from Validators.mask_rcnn_wrapper import MaskRCNNWrapper
 from Validators.retinanet_wrapper import RetinaNetWrapper
 from Validators.ssd_wrapper import SSDWrapper
-
+from Validators.efficientdet_wrapper import EfficientDetWrapper
 
 # --- ОСНОВНІ НАЛАШТУВАННЯ ---
 VIDEO_DIR = r"C:\Users\serhi\OneDrive\CD_DSST\Article_syntetic_data\Data_for_tests\Video_interceptors"
@@ -38,7 +38,8 @@ MODEL_FACTORIES = {
     "RT DETR (Ultralitics)": RTDETRUltralyticsWrapper,
     "Mask R-CNN (ResNet50)": MaskRCNNWrapper,
     "RetinaNet (ResNet50)": RetinaNetWrapper,
-    "SSD (VGG16/MobileNetV3)": SSDWrapper
+    "SSD (VGG16/MobileNetV3)": SSDWrapper,
+    "EfficientDet": EfficientDetWrapper,
 }
 
 sahi_supported_models = ["YOLOv8", "SSD (VGG16/MobileNetV3)"] # <-- Перевірте, що назва тут ідентична
@@ -130,7 +131,7 @@ def main():
 
             if model_name in sahi_supported_models:
                 sahi_choice = input(f"Використовувати SAHI (slicing) для цієї моделі? (y/n): ").strip().lower()
-                if sahi_choice in [['y', 'Y', 'н', 'Н']:
+                if sahi_choice in ['y', 'Y', 'н', 'Н']:
                     use_sahi_for_this_model = True
                     use_tracker_for_this_model = False
                     print("✅ Для цієї моделі буде застосовано SAHI. ByteTrack вимкнено, оскільки вони несумісні.")
