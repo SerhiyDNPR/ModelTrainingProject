@@ -1,21 +1,11 @@
-import datetime as dt
 import os
 import shutil
-import torch
-import cv2
-import yaml
 import json
 import re
 from glob import glob
 from pathlib import Path
 from sklearn.model_selection import train_test_split
-from ultralytics import YOLO
-from multiprocessing import freeze_support
 from tqdm import tqdm
-import tkinter as tk
-from tkinter import filedialog
-
-# --- ФУНКЦІЇ, ПЕРЕНЕСЕНІ З КОНВЕРТЕРА ---
 
 def natural_sort_key(s):
     """Ключ для природного сортування (solo_1, solo_2, solo_10)."""
@@ -181,90 +171,3 @@ def check_for_unfinished_training():
             print("🗑️ Попередній прогрес буде проігноровано. Навчання розпочнеться з нуля.")
             return None
     return None
-
-def add_hard_negatives(dataset_dir):
-    """Додає 'складні негативні' приклади до тренувальної вибірки."""
-    answer = input("\nБажаєте додати Hard Negative приклади до навчальної вибірки? (y/n): ").strip().lower()
-    if answer not in ['y', 'Y', 'н', 'Н']:
-        print("Пропускаємо додавання Hard Negative прикладів.")
-        return
-
-    root = tk.Tk()
-    root.withdraw()
-    print("Будь ласка, оберіть директорію з Hard Negative прикладами...")
-    hard_negatives_dir = filedialog.askdirectory(title="Оберіть директорію з Hard Negative прикладами")
-    if not hard_negatives_dir:
-        print("Директорію не обрано. Пропускаємо.")
-        return
-
-    train_images_dir = os.path.join(dataset_dir, "images", "train")
-    train_labels_dir = os.path.join(dataset_dir, "labels", "train")
-    hn_images = glob(os.path.join(hard_negatives_dir, "*.jpg")) + glob(os.path.join(hard_negatives_dir, "*.png"))
-    if not hn_images:
-        print("⚠️ У вказаній директорії не знайдено зображень (.jpg або .png).")
-        return
-        
-    print(f"Копіювання {len(hn_images)} Hard Negative файлів...")
-    for img_path in tqdm(hn_images, desc="Hard Negatives", unit="file"):
-        shutil.copy(img_path, os.path.join(train_images_dir, os.path.basename(img_path)))
-        base_name, _ = os.path.splitext(os.path.basename(img_path))
-        open(os.path.join(train_labels_dir, f"{base_name}.txt"), 'w').close()
-    print(f"✅ Успішно додано {len(hn_images)} файлів до тренувальної вибірки.")
-
-if __name__ == '__main__':
-    freeze_support()
-    perception_source_dir = r"C:\Users\serhi\AppData\LocalLow\DefaultCompany\GenerateSynteticData"
-    final_dataset_dir = "YoloDataset"
-
-    do_conversion = input("Бажаєте запустити конвертацію даних з Unity Perception? (y/n): ").strip().lower()
-    if do_conversion in ['y', 'Y', 'н', 'Н']:
-        if not os.path.isdir(perception_source_dir):
-            print(f"ПОМИЛКА: Вказаний шлях до даних Perception '{perception_source_dir}' не існує.")
-            exit(1)
-            
-        imgsz, class_names = convert_and_prepare_data(perception_source_dir, final_dataset_dir)
-        if imgsz is None:
-            print("Помилка під час підготовки даних. Роботу зупинено.")
-            exit(1)
-
-        add_hard_negatives(final_dataset_dir)
-
-        print("\nСтворення файлу yolo_config.yaml для тренування...")
-        with open("yolo_config.yaml", "w", encoding='utf-8') as f:
-            f.write(f"path: {os.path.abspath(final_dataset_dir)}\n")
-            f.write("train: images/train\nval: images/val\ntest: images/test\n\n")
-            f.write(f"nc: {len(class_names)}\nnames: {class_names}\n")
-    else:
-        print("Конвертацію пропущено. Перевірка наявності існуючого датасету...")
-        if not os.path.exists(final_dataset_dir) or not os.path.exists("yolo_config.yaml"):
-             print(f"ERROR: Неможливо продовжити. Папка '{final_dataset_dir}' або файл 'yolo_config.yaml' відсутні.")
-             exit(1)
-        try:
-            existing_image = glob(os.path.join(final_dataset_dir, "images", "train", "*.*"))[0]
-            img = cv2.imread(existing_image)
-            imgsz = (int(img.shape[1]), int(img.shape[0]))
-        except IndexError:
-            print("ERROR: Не знайдено зображень у тренувальній вибірці для визначення розміру.")
-            exit(1)
-    
-    resume_path = check_for_unfinished_training()
-    should_resume = resume_path is not None
-    model_to_load = resume_path if should_resume else "yolov8n.pt"
-    model = YOLO(model_to_load)
-
-    print("\n🚀 Розпочинаємо тренування моделі...")
-    model.train(
-        data='yolo_config.yaml',
-        epochs=40,
-        imgsz=imgsz[0],
-        batch=16,
-        project='runs/detect',
-        name=f'train_{dt.datetime.now().strftime("%Y%m%d_%H%M%S")}',
-        exist_ok=False,
-        device='cuda' if torch.cuda.is_available() else 'cpu',
-        patience=10,
-        resume=should_resume
-    )
-    res_str = f"{imgsz[0]}x{imgsz[1]}"
-    model.save(f"Final-YOLOv8n-{res_str}.pt")
-    print(f"\n✅ Тренування завершено. Фінальну модель збережено як Final-YOLOv8n-{res_str}.pt")

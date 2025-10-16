@@ -12,6 +12,7 @@ from xml.dom import minidom
 from PIL import Image
 from collections import defaultdict # <-- ДОДАНО
 from converters.converters import BaseDataConverter, remove_readonly
+from inputimeout import inputimeout, TimeoutOccurred
 
 # --- Конвертер для Faster R-CNN (у форматі PASCAL VOC XML) ---
 class PascalVOCDataConverter(BaseDataConverter):
@@ -268,8 +269,22 @@ class PascalVOCDataConverter(BaseDataConverter):
                 f.write(f"{name}\n")
 
     def _add_hard_negatives_rcnn(self):
-        """Додає 'складні негативні' приклади з окремої папки до всіх вибірок."""
-        answer = input("\nБажаєте додати Hard Negative приклади з окремої папки? (y/n): ").strip().lower()
+        """Додаємо 'складні негативні' приклади до тренувальної вибірки з 5-секундним таймаутом."""
+        answer = ''
+        try:
+            # Створюємо запит з таймаутом у 5 секунд
+            prompt = "\nБажаєте додати Hard Negative приклади до навчальної вибірки? (y/n) [автоматично 'n' через 5с]: "
+            answer = inputimeout(prompt=prompt, timeout=5).strip().lower()
+        except TimeoutOccurred:
+            # Якщо час вийшов, присвоюємо відповідь 'n' і виводимо повідомлення
+            answer = 'n'
+            print("\nЧас на введення вичерпано. Приймається відповідь 'n'.")
+        except Exception:
+             # Якщо бібліотека не встановлена, і ми використовуємо 'заглушку',
+             # то просто ставимо стандартне питання
+             prompt = "\nБажаєте додати Hard Negative приклади до навчальної вибірки? (y/n): "
+             answer = input(prompt).strip().lower()
+
         if answer not in ['y', 'Y', 'н', 'Н']:
             print("Пропускаємо додавання Hard Negative прикладів.")
             return

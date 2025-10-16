@@ -8,6 +8,7 @@ from tqdm import tqdm
 import tkinter as tk
 from tkinter import filedialog
 import collections
+from inputimeout import inputimeout, TimeoutOccurred
 
 def remove_readonly(func, path, _):
     """Допоміжна функція для видалення файлів лише для читання."""
@@ -265,8 +266,22 @@ class COCODataConverter:
         return len(negative_files)
 
     def _add_hard_negatives(self, train_data):
-        """Додає 'складні негативні' приклади до тренувальної вибірки."""
-        answer = input("\nБажаєте додати Hard Negative приклади до навчальної вибірки? (y/n): ").strip().lower()
+        """Додаємо 'складні негативні' приклади до тренувальної вибірки з 5-секундним таймаутом."""
+        answer = ''
+        try:
+            # Створюємо запит з таймаутом у 5 секунд
+            prompt = "\nБажаєте додати Hard Negative приклади до навчальної вибірки? (y/n) [автоматично 'n' через 5с]: "
+            answer = inputimeout(prompt=prompt, timeout=5).strip().lower()
+        except TimeoutOccurred:
+            # Якщо час вийшов, присвоюємо відповідь 'n' і виводимо повідомлення
+            answer = 'n'
+            print("\nЧас на введення вичерпано. Приймається відповідь 'n'.")
+        except Exception:
+             # Якщо бібліотека не встановлена, і ми використовуємо 'заглушку',
+             # то просто ставимо стандартне питання
+             prompt = "\nБажаєте додати Hard Negative приклади до навчальної вибірки? (y/n): "
+             answer = input(prompt).strip().lower()
+
         if answer not in ['y', 'Y', 'н', 'Н']:
             print("Пропускаємо додавання Hard Negative прикладів.")
             return
