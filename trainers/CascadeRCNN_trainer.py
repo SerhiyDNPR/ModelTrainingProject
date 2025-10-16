@@ -16,19 +16,19 @@ from trainers.trainers import BaseTrainer, collate_fn, log_dataset_statistics_to
 from torchmetrics.detection import MeanAveragePrecision
 from torch.utils.tensorboard import SummaryWriter
 
-# try:
-#     from mmengine.config import Config
-#     from mmengine.runner import load_checkpoint
-#     from mmdet.models import build_detector
-#     from mmdet.structures import DetDataSample
-#     from mmengine.structures import InstanceData
-# except ImportError:
-#     print("="*60)
-#     print("🔴 ПОМИЛКА: MMDetection або його залежності не встановлено!")
-#     print("   Будь ласка, встановіть їх, виконавши команди з інструкції,")
-#     print("   інакше навчання Cascade R-CNN буде неможливим.")
-#     print("="*60)
-#     sys.exit(1)
+try:
+    from mmengine.config import Config
+    from mmengine.runner import load_checkpoint
+    from mmengine.registry import MODELS 
+    from mmdet.structures import DetDataSample
+    from mmengine.structures import InstanceData
+except ImportError:
+    print("="*60)
+    print("🔴 ПОМИЛКА: MMDetection або його залежності не встановлено!")
+    print("   Будь ласка, встановіть їх, виконавши команди з інструкції,")
+    print("   інакше навчання Cascade R-CNN буде неможливим.")
+    print("="*60)
+    sys.exit(1)
 
 
 class MMDetModelWrapper(nn.Module):
@@ -45,7 +45,7 @@ class MMDetModelWrapper(nn.Module):
         cfg.model.roi_head.bbox_head[2].num_classes = num_classes - 1
         
         # 2. Створення моделі
-        self.model = build_detector(cfg.model)
+        self.model = MODELS.build(cfg.model) 
 
         # 3. Завантаження попередньо навчених ваг
         print(f"🔄 Завантаження ваг для '{backbone_type}' з MMDetection Model Zoo...")

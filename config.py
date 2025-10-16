@@ -18,7 +18,7 @@ FRAMEWORKS = {
     7: "RT-DETR (Ultralytics)",
     8: "Mask R-CNN",
     9: "RetinaNet",
-    10: "Cascade R-CNN (NOT IMPLEMENTED)",
+    10: "Cascade R-CNN",
     11: "SSD",
     12: "EfficientDet"
 }
@@ -148,8 +148,8 @@ RETINANET_TRAIN_PARAMS = {
 # Параметри для Cascade R-CNN 
 CASCADE_RCNN_TRAIN_PARAMS = {
     'epochs': 25,
-    'batch': 4,  # Зменшено, оскільки модель вимогливіша до пам'яті
-    'accumulation_steps': 4,  # Збільшено для компенсації меншого batch_size (4x4=16)
+    'batch': 2,  # Зменшено, оскільки модель вимогливіша до пам'яті
+    'accumulation_steps': 8,  # Збільшено для компенсації меншого batch_size (4x4=16)
     'lr': 0.0001,
     'device': 'cuda' if torch.cuda.is_available() else 'cpu',
     'project': 'runs/cascade-rcnn',
