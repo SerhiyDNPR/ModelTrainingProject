@@ -10,6 +10,7 @@ import torch.optim.lr_scheduler as lr_scheduler
 from torch.utils.data import DataLoader
 import torchvision.transforms as T
 from tqdm import tqdm
+import stat
 
 from DataSetUtils.PascalVOCDataset import PascalVOCDataset
 from trainers.trainers import BaseTrainer, collate_fn, log_dataset_statistics_to_tensorboard
@@ -19,9 +20,10 @@ from torch.utils.tensorboard import SummaryWriter
 try:
     from mmengine.config import Config
     from mmengine.runner import load_checkpoint
-    from mmengine.registry import MODELS 
-    from mmdet.structures import DetDataSample
+    from mmengine.registry import MODELS
     from mmengine.structures import InstanceData
+    from mmdet.structures import DetDataSample
+    import mmengine
 except ImportError:
     print("="*60)
     print("🔴 ПОМИЛКА: MMDetection або його залежності не встановлено!")
@@ -29,6 +31,13 @@ except ImportError:
     print("   інакше навчання Cascade R-CNN буде неможливим.")
     print("="*60)
     sys.exit(1)
+
+# Явно імпортуємо всі основні модулі, щоб гарантовано зареєструвати компоненти.
+from mmdet.models.detectors import *
+from mmdet.models.backbones import *
+from mmdet.models.necks import *
+from mmdet.models.roi_heads import *
+from mmdet.models.dense_heads import *
 
 
 class MMDetModelWrapper(nn.Module):
@@ -44,12 +53,14 @@ class MMDetModelWrapper(nn.Module):
         cfg.model.roi_head.bbox_head[1].num_classes = num_classes - 1
         cfg.model.roi_head.bbox_head[2].num_classes = num_classes - 1
         
+        # Явно встановлюємо "scope" на 'mmdet', щоб mmengine знав, де шукати моделі.
+        mmengine.DefaultScope.get_instance('mmdet_scope', scope_name='mmdet')
+        
         # 2. Створення моделі
-        self.model = MODELS.build(cfg.model) 
+        self.model = MODELS.build(cfg.model)
 
         # 3. Завантаження попередньо навчених ваг
         print(f"🔄 Завантаження ваг для '{backbone_type}' з MMDetection Model Zoo...")
-        # Завантажуємо ваги, ігноруючи фінальні шари класифікації, оскільки їх розмір змінився
         checkpoint = load_checkpoint(self.model, checkpoint_url, map_location='cpu', revise_keys=[(r'^roi_head\.bbox_head\.', '')])
         print("✅ Ваги успішно завантажено.")
 
@@ -57,38 +68,47 @@ class MMDetModelWrapper(nn.Module):
         """
         Універсальний forward, що працює і для навчання, і для валідації.
         """
-        # MMDetection очікує на вхід батч зображень у вигляді одного тензора
         if isinstance(images, list):
-            # Проста реалізація, яка не враховує різний розмір зображень у батчі
-            # Для цього тренера це ОК, оскільки є T.Resize
             images = torch.stack(images, 0)
             
+        img_shape = (images.shape[2], images.shape[3])
+
         if self.training and targets is not None:
             # --- РЕЖИМ НАВЧАННЯ ---
-            # Конвертація цілей з формату torchvision у формат MMDetection (DataSample)
             data_samples = []
-            for target in targets:
+            for i, target in enumerate(targets):
                 gt_instances = InstanceData()
                 gt_instances.bboxes = target['boxes']
                 gt_instances.labels = target['labels']
                 
-                # Отримуємо розмір зображення з тензора
-                img_meta = {'img_shape': (images.shape[2], images.shape[3])}
+                metainfo = {
+                    'img_id': i,
+                    'img_shape': img_shape,
+                    'ori_shape': img_shape,
+                    'pad_shape': img_shape,
+                    'scale_factor': (1.0, 1.0)
+                }
 
-                data_sample = DetDataSample(gt_instances=gt_instances, metainfo=img_meta)
+                data_sample = DetDataSample(gt_instances=gt_instances, metainfo=metainfo)
                 data_samples.append(data_sample)
             
-            # Повертаємо словник з втратами
             losses = self.model.loss(images, data_samples)
             return losses
         else:
             # --- РЕЖИМ ВАЛІДАЦІЇ ---
-            data_samples = [DetDataSample(metainfo={'img_shape': (images.shape[2], images.shape[3])}) for _ in range(images.shape[0])]
+            data_samples = []
+            for i in range(images.shape[0]):
+                metainfo = {
+                    'img_id': i,
+                    'img_shape': img_shape,
+                    'ori_shape': img_shape,
+                    'pad_shape': img_shape,
+                    'scale_factor': (1.0, 1.0)
+                }
+                data_samples.append(DetDataSample(metainfo=metainfo))
             
-            # Отримуємо прогнози
             predictions_list = self.model.predict(images, data_samples)
             
-            # Конвертація результатів з формату MMDetection у torchvision
             results = []
             for pred_sample in predictions_list:
                 results.append({
@@ -98,38 +118,50 @@ class MMDetModelWrapper(nn.Module):
                 })
             return results
 
+# Функція-обробник помилок для shutil.rmtree, яка знімає атрибут "тільки для читання"
+def remove_readonly(func, path, _):
+    """Знімає атрибут "тільки для читання" і повторює спробу видалення."""
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
+
 def get_cascade_rcnn_model_from_mmdet(backbone_type, num_classes):
     """
     Створює та повертає модель Cascade R-CNN з MMDetection.
     """
     if backbone_type == 'resnet50':
-        # Конфігураційний файл для ResNet-50
         config_path = 'configs/cascade_rcnn/cascade-rcnn_r50_fpn_1x_coco.py'
-        # URL до попередньо навченої моделі
         checkpoint_url = 'https://download.openmmlab.com/mmdetection/v2.0/cascade_rcnn/cascade_rcnn_r50_fpn_1x_coco/cascade_rcnn_r50_fpn_1x_coco_20200316-3dc56deb.pth'
     elif backbone_type == 'resnet101':
-        # Конфігураційний файл для ResNet-101
         config_path = 'configs/cascade_rcnn/cascade-rcnn_r101_fpn_1x_coco.py'
-        # URL до попередньо навченої моделі
         checkpoint_url = 'https://download.openmmlab.com/mmdetection/v2.0/cascade_rcnn/cascade_rcnn_r101_fpn_1x_coco/cascade_rcnn_r101_fpn_1x_coco_20200317-0b6a2fbf.pth'
     else:
         raise ValueError(f"Непідтримуваний backbone '{backbone_type}' для Cascade R-CNN.")
     
-    # Створюємо тимчасову папку для конфігів, якщо її немає
-    if not os.path.exists('configs'):
-        print("📂 Створення тимчасової папки 'configs' для конфігураційних файлів MMDetection...")
+    if not os.path.exists(config_path):
+        print("📂 Конфігураційні файли не знайдено. Запуск завантаження з MMDetection...")
+        temp_repo_dir = 'mmdetection_temp'
+        original_cwd = os.getcwd()
+        
+        if os.path.exists(temp_repo_dir):
+            shutil.rmtree(temp_repo_dir, onerror=remove_readonly)
+
         try:
-            # Клонуємо репозиторій MMDetection, щоб отримати конфіги
-            os.system('git clone https://github.com/open-mmlab/mmdetection.git')
-            # Переміщуємо папку з конфігами
-            shutil.move('mmdetection/configs', 'configs')
-            # Видаляємо решту репозиторію
-            shutil.rmtree('mmdetection')
+            os.system(f'git clone --filter=blob:none --no-checkout https://github.com/open-mmlab/mmdetection.git {temp_repo_dir}')
+            os.chdir(temp_repo_dir)
+            os.system('git sparse-checkout init --cone')
+            os.system('git sparse-checkout set configs')
+            os.system('git checkout')
+            os.chdir(original_cwd)
+            shutil.move(os.path.join(temp_repo_dir, 'configs'), 'configs')
             print("✅ Конфігураційні файли успішно завантажено.")
         except Exception as e:
+            os.chdir(original_cwd)
             print(f"❌ Не вдалося завантажити конфіги. Помилка: {e}")
             print("   Будь ласка, завантажте їх вручну з репозиторію MMDetection.")
             sys.exit(1)
+        finally:
+            if os.path.exists(temp_repo_dir):
+                shutil.rmtree(temp_repo_dir, onerror=remove_readonly)
             
     return MMDetModelWrapper(config_path, checkpoint_url, num_classes, backbone_type)
 
@@ -181,7 +213,6 @@ class CascadeRCNNTrainer(BaseTrainer):
         print(f"🔧 Створення моделі: {self._get_model_name()}")
         backbone_name = self.backbone_type.split('_')[0]
         
-        # Виклик нової функції для отримання реальної моделі
         model_wrapper = get_cascade_rcnn_model_from_mmdet(backbone_name, num_classes)
         
         is_finetune = self.backbone_type.endswith('_finetune')
@@ -270,8 +301,8 @@ class CascadeRCNNTrainer(BaseTrainer):
         label_map_path = os.path.join(self.dataset_dir, 'label_map.txt')
         with open(label_map_path, 'r', encoding='utf-8') as f:
             class_names = [line.strip() for line in f.readlines()]
-        label_map = {name: i for i, name in enumerate(class_names)} # MMDetection очікує мітки з 0
-        num_classes = len(label_map) + 1 # Кількість класів + 1 для фону (для логіки)
+        label_map = {name: i for i, name in enumerate(class_names)} 
+        num_classes = len(label_map) + 1 
 
         train_dataset = PascalVOCDataset(os.path.join(self.dataset_dir, 'train'), transforms=None, label_map=label_map)
         val_dataset = PascalVOCDataset(os.path.join(self.dataset_dir, 'val'), transforms=None, label_map=label_map)
@@ -290,12 +321,24 @@ class CascadeRCNNTrainer(BaseTrainer):
         if imgsz: transforms.transforms.insert(0, T.Resize((imgsz[1], imgsz[0])))
         
         for i, (images, targets) in enumerate(progress_bar):
-            images = [transforms(img).to(device) for img in images]
-            targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+            images_list = [transforms(img).to(device) for img in images]
+            targets_list = [{k: v.to(device) for k, v in t.items()} for t in targets]
             
-            loss_dict = model(images, targets)
-            # Сумуємо всі втрати з MMDetection
-            losses = sum(loss.mean() for loss in loss_dict.values())
+            loss_dict = model(images_list, targets_list)
+            
+            # --- ВИРІШЕННЯ ПРОБЛЕМИ ---
+            # MMDetection може повертати списки тензорів для деяких loss'ів.
+            # Цей код "розгортає" їх в єдиний список перед підсумовуванням.
+            loss_components = []
+            for loss in loss_dict.values():
+                if isinstance(loss, list):
+                    loss_components.extend(loss) # Додаємо всі тензори зі списку
+                else:
+                    loss_components.append(loss) # Додаємо один тензор
+            
+            # Тепер підсумовуємо середні значення всіх окремих компонентів втрат.
+            losses = sum(l.mean() for l in loss_components)
+            # --------------------------
             
             if self.accumulation_steps > 1: losses = losses / self.accumulation_steps
             losses.backward()

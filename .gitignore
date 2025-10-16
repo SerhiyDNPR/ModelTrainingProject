@@ -20,3 +20,5 @@ COCODataSet/
 *val.cache
 *train.cache
 filters.json
+config/
+mmdetection_temp/
