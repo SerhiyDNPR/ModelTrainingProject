@@ -34,10 +34,10 @@ MODEL_FACTORIES = {
     "DETR": DETRWrapper,
     "Deformable DETR": DeformableDETRWrapper,
     "Faster R-CNN (ResNet50/ResNet101/MobileNet)": FasterRCNNWrapper,
-    "FCOS (ResNet50)": FCOSWrapper,
+    "FCOS (ResNet50/EfficientNet(?))": FCOSWrapper,
     "RT DETR (Ultralitics)": RTDETRUltralyticsWrapper,
     "Mask R-CNN (ResNet50)": MaskRCNNWrapper,
-    "RetinaNet (ResNet50)": RetinaNetWrapper,
+    "RetinaNet (ResNet50/EfficientNet)": RetinaNetWrapper,
     "SSD (VGG16/MobileNetV3)": SSDWrapper,
     "EfficientDet": EfficientDetWrapper,
 }
