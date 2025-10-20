@@ -165,7 +165,6 @@ def get_cascade_rcnn_model_from_mmdet(backbone_type, num_classes):
             
     return MMDetModelWrapper(config_path, checkpoint_url, num_classes, backbone_type)
 
-
 class CascadeRCNNTrainer(BaseTrainer):
     """
     Керує процесом навчання моделі Cascade R-CNN, інтегрованої з MMDetection.
@@ -278,7 +277,7 @@ class CascadeRCNNTrainer(BaseTrainer):
             writer.add_scalar('LearningRate/Main', optimizer.param_groups[0]['lr'], epoch)
             is_best = val_map > best_map
             if is_best: best_map = val_map
-            self._save_checkpoint({
+            self.save_checkpoint({
                 'epoch': epoch + 1, 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(), 'scheduler_state_dict': scheduler.state_dict(),
                 'best_map': best_map
@@ -386,13 +385,6 @@ class CascadeRCNNTrainer(BaseTrainer):
                 return os.path.basename(last_train_dir), last_model_path
         print("🗑️ Попередній прогрес буде проігноровано.")
         return f'train_{dt.datetime.now().strftime("%Y%m%d_%H%M%S")}', None
-
-    def _save_checkpoint(self, state, is_best, run_dir):
-        last_path = os.path.join(run_dir, "last_checkpoint.pth")
-        torch.save(state, last_path)
-        if is_best:
-            best_path = os.path.join(run_dir, "best_model.pth")
-            shutil.copyfile(last_path, best_path)
 
     def _load_checkpoint(self, path, model, optimizer, scheduler, device):
         checkpoint = torch.load(path, map_location=device)

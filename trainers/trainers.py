@@ -1,6 +1,7 @@
 # trainers.py
 
 import os
+import shutil
 import pprint
 from abc import ABC, abstractmethod
 from glob import glob
@@ -59,6 +60,21 @@ class BaseTrainer(ABC):
         
         print("🗑️ Попередній прогрес буде проігноровано. Навчання розпочнеться з нуля.")
         return None, False
+    
+    def save_checkpoint(self, state, is_best, run_dir):
+        # Зберегти останній чекпоінт для відновлення
+        last_path = os.path.join(run_dir, "last_checkpoint.pth")
+        torch.save(state, last_path)
+
+        # Зберегти чекпоінт для конкретної епохи
+        epoch_num = state['epoch']
+        epoch_path = os.path.join(run_dir, f"model_epoch_{epoch_num}.pth")
+        shutil.copyfile(last_path, epoch_path)
+
+        if is_best:
+            # Якщо це найкраща модель, скопіювати її в окремий файл
+            best_path = os.path.join(run_dir, "best_model.pth")
+            shutil.copyfile(last_path, best_path)
 
 def collate_fn(batch):
     """Спеціальна функція для об'єднання батчів у DataLoader."""

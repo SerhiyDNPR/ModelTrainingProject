@@ -205,7 +205,7 @@ class SSDTrainer(BaseTrainer):
 
                 is_best = val_map > best_map
                 if is_best: best_map = val_map
-                self._save_checkpoint(epoch + 1, model, optimizer, scheduler, best_map, global_step, is_best, run_dir)
+                self.save_checkpoint(epoch + 1, model, optimizer, scheduler, best_map, global_step, is_best, run_dir)
                 epoch_state = {
                     'epoch': epoch + 1,
                     'model_state_dict': model.state_dict(),
@@ -287,15 +287,3 @@ class SSDTrainer(BaseTrainer):
         except Exception as e:
             print(f"⚠️ Не вдалося завантажити чекпоінт: {e}. Починаємо з нуля.")
             return 0, 0.0, 0
-
-    def _save_checkpoint(self, epoch, model, optimizer, scheduler, best_map, global_step, is_best, run_dir):
-        state = {
-            'epoch': epoch, 'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'scheduler_state_dict': scheduler.state_dict(),
-            'best_map': best_map, 'global_step': global_step
-        }
-        last_path = os.path.join(run_dir, "last_checkpoint.pth")
-        torch.save(state, last_path)
-        if is_best:
-            shutil.copyfile(last_path, os.path.join(run_dir, "best_model.pth"))

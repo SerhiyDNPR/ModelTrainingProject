@@ -155,7 +155,7 @@ class EfficientDetTrainer(BaseTrainer):
             if is_best:
                 best_map = val_map
 
-            self._save_checkpoint({
+            self.save_checkpoint({
                 'epoch': epoch + 1, 'model_state_dict': model.model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(), 'best_map': best_map,
                 'lr_scheduler_state_dict': lr_scheduler.state_dict()
@@ -305,7 +305,6 @@ class EfficientDetTrainer(BaseTrainer):
     # Використовуємо методи з FasterRCNNTrainer для уніфікації
     from trainers.FasterRCNNTrainer import FasterRCNNTrainer
     _check_for_resume = FasterRCNNTrainer._check_for_resume_rcnn
-    _save_checkpoint = FasterRCNNTrainer._save_checkpoint
 
     def _load_checkpoint(self, path, model, optimizer, device, lr_scheduler=None):
         checkpoint = torch.load(path, map_location=device)

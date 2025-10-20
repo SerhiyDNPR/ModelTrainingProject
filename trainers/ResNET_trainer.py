@@ -68,7 +68,7 @@ class ResNetTrainer(BaseTrainer):
                 best_accuracy = val_acc
                 final_loss = val_loss
 
-            self._save_checkpoint({
+            self.save_checkpoint({
                 'epoch': epoch + 1, 'state_dict': model.state_dict(),
                 'optimizer': optimizer.state_dict(), 'best_accuracy': best_accuracy
             }, is_best, run_dir)
@@ -183,14 +183,7 @@ class ResNetTrainer(BaseTrainer):
         epoch_loss = running_loss / total_samples
         epoch_acc = correct_predictions.double() / total_samples
         return epoch_loss, epoch_acc.item()
-    
-    def _save_checkpoint(self, state, is_best, run_dir):
-        """Зберігає контрольну точку моделі."""
-        last_path = os.path.join(run_dir, "last_checkpoint.pth")
-        torch.save(state, last_path)
-        if is_best:
-            best_path = os.path.join(run_dir, "best_model.pth")
-            shutil.copyfile(last_path, best_path)
+
 
     def _load_checkpoint(self, path, model, optimizer, device):
         """Завантажує контрольну точку."""

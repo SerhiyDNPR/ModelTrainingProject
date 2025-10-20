@@ -1,7 +1,6 @@
 import os
 import sys
 import datetime as dt
-import shutil 
 from glob import glob
 import torch
 import torch.optim as optim
@@ -202,7 +201,7 @@ class FasterRCNNTrainer(BaseTrainer):
             if is_best:
                 best_map = val_map
 
-            self._save_checkpoint({
+            self.save_checkpoint({
                 'epoch': epoch + 1,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
@@ -327,21 +326,6 @@ class FasterRCNNTrainer(BaseTrainer):
         run_name = f'train_{dt.datetime.now().strftime("%Y%m%d_%H%M%S")}'
         return run_name, None
         
-    def _save_checkpoint(self, state, is_best, run_dir):
-        # Зберегти останній чекпоінт для відновлення
-        last_path = os.path.join(run_dir, "last_checkpoint.pth")
-        torch.save(state, last_path)
-
-        # Зберегти чекпоінт для конкретної епохи
-        epoch_num = state['epoch']
-        epoch_path = os.path.join(run_dir, f"model_epoch_{epoch_num}.pth")
-        shutil.copyfile(last_path, epoch_path)
-
-        if is_best:
-            # Якщо це найкраща модель, скопіювати її в окремий файл
-            best_path = os.path.join(run_dir, "best_model.pth")
-            shutil.copyfile(last_path, best_path)
-
     def _load_checkpoint(self, path, model, optimizer, scheduler, device):
         checkpoint = torch.load(path, map_location=device)
         model.load_state_dict(checkpoint['model_state_dict'])
