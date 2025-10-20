@@ -98,8 +98,6 @@ class RetinaNetTrainer(BaseTrainer):
         if 'efficientdet' in self.backbone_type:
             print(f"🔧 Створення моделі: {self._get_model_name()}")
 
-            # --- ЗМІНА: Використання уніфікованої функції ---
-            # Використовуємо `pretrained=True`, оскільки тренування завжди починається з ваг ImageNet
             backbone = create_fpn_backbone(self.backbone_type, pretrained=True)
             # -----------------------------------------------
 

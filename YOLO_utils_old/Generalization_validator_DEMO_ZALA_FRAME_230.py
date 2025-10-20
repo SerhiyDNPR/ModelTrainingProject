@@ -2,13 +2,11 @@ import cv2
 import os
 from ultralytics import YOLO
 
-# --- НАЛАШТУВАННЯ ---
 MODEL_PATH = r"C:\Users\serhi\OneDrive\CD_DSST\Article_syntetic_data\Trained models\Zala-Supercum-detector-YOLO8n-640-480.pt"
 VIDEO_DIR = r"C:\Users\serhi\OneDrive\CD_DSST\Article_syntetic_data\Data_for_tests\Video_interceptors\src"
 FILENAME_FILTER = "Зала4_Орлан_Суперкам"
 CONF_THRESHOLD = 0.5
 EDGE_MARGIN = 150 # Відступ від краю в пікселях для фільтрації об'єктів
-# --- КІНЕЦЬ НАЛАШТУВАНЬ ---
 
 # --- Глобальні змінні для керування станом програми ---
 is_paused = False

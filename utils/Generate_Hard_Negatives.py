@@ -9,13 +9,11 @@ MODEL_PATH = r"C:\Users\serhi\OneDrive\CD_DSST\Article_syntetic_data\Trained mod
 VIDEO_DIR = r"C:\Users\serhi\OneDrive\CD_DSST\Article_syntetic_data\Data_for_tests\Video_interceptors\src"
 # Вихідний каталог для збереження негативних прикладів
 OUTPUT_DIR = r"C:\Users\serhi\OneDrive\CD_DSST\Article_syntetic_data\Data_for_tests\Hard_Negatives"
-# --- ЗМІНА ---
 # Фільтр для імен відеофайлів (наприклад, "Drone" або "*" для всіх)
 FILENAME_FILTER = "*"
 CROP_SIZE = (640, 480)
 FRAME_STEP = 40
 
-# --- Глобальні змінні та константи ---
 crop_center = None
 WINDOW_NAME = "Hard Negative Mining Tool"
 # Коди клавіш
@@ -57,7 +55,6 @@ def find_video_files(video_dir, filename_filter):
         return []
         
     for f in os.listdir(video_dir):
-        # --- ЗМІНА: Додано перевірку на '*' ---
         name_matches = (filename_filter == '*') or (filename_filter in f)
         
         if os.path.splitext(f)[1].lower() in supported_formats and name_matches:

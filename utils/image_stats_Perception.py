@@ -127,7 +127,6 @@ def analyze_data(root_dir):
         print(f"🔄 Обробка каталогу: {solo_name}...")
         annotation_files = glob.glob(os.path.join(solo_dir, '**', '*.json'), recursive=True)
         
-        # --- ЗМІНА СТРУКТУРИ ДАНИХ ---
         bboxes = []
 
         for ann_file in annotation_files:
@@ -235,7 +234,6 @@ def create_interactive_plot(stats_to_plot, all_stats_with_paths, title, xlabel, 
         xmin, xmax = sorted((eclick.xdata, erelease.xdata))
         print(f"\n🖱️ Вибрано діапазон '{xlabel}': [{xmin:.2f}, {xmax:.2f}]")
         
-        # --- ЗМІНА ЛОГІКИ: ЗБИРАЄМО ОБ'ЄКТИ, А НЕ ШЛЯХИ ---
         filtered_objects = []
         dimension_key = data_type.rstrip('s') # 'widths' -> 'width'
         

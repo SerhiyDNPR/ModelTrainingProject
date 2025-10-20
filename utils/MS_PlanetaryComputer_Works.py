@@ -15,7 +15,7 @@ def convert_naip_to_jpeg(tiff_path, jpeg_path):
             if src.count < 3:
                 print(f"    ⚠️ Файл '{os.path.basename(tiff_path)}' не є кольоровим. Пропущено.")
                 return False
-            # ... (решта коду функції без змін)
+
             red, green, blue = src.read(1), src.read(2), src.read(3)
             profile = src.profile
         def scale(c):
@@ -36,7 +36,6 @@ def download_file_with_progress(href):
     print(f"⏳ Завантаження файлу: {os.path.basename(href)}")
     response = requests.get(href, stream=True)
     response.raise_for_status()
-    # ... (решта коду функції без змін)
     total_size = int(response.headers.get('content-length', 0))
     chunk_size = 8192
     temp_data = bytearray()
@@ -83,12 +82,11 @@ try:
     USA_BBOX = [-125.0, 24.0, -66.0, 49.0]
     TIME_RANGE = "2020-01-01/2023-12-31"
     IMAGES_PER_SEASON = 10
-    # --- ЗМІНЕНО: Шлях до директорії ---
+
     OUTPUT_DIR = r"C:\Users\serhi\OneDrive\CD_DSST\Article_syntetic_data\Data_for_tests\Map-textures"
     
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     
-    # --- ЗМІНЕНО: Ініціалізуємо лічильники на основі існуючих файлів ---
     season_counts = scan_existing_files(OUTPUT_DIR)
     print("Стан папки перед запуском:")
     for s, c in season_counts.items():

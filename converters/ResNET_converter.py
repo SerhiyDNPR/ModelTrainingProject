@@ -30,7 +30,7 @@ class ResNetDataConverter(BaseDataConverter):
         negative_dir = source_dirs[-1] if len(source_dirs) > 1 else None
 
         # 1. Збір всіх зображень, їх класів та розміру
-        all_image_pairs, imgsz = self._get_image_class_pairs(annotated_dirs, negative_dir) # <-- ЗМІНА 1
+        all_image_pairs, imgsz = self._get_image_class_pairs(annotated_dirs, negative_dir)
         if not all_image_pairs:
             print("ПОМИЛКА: Не знайдено жодного зображення для обробки.")
             return
@@ -142,7 +142,7 @@ class ResNetDataConverter(BaseDataConverter):
     def _get_image_class_pairs(self, annotated_dirs, negative_dir):
         """Збирає пари (шлях до зображення, назва класу) з усіх джерел."""
         image_class_pairs = []
-        imgsz = None # <-- ЗМІНА 3
+        imgsz = None
         
         print("\n🔎 Збір та аналіз файлів з анотаціями...")
         for directory in tqdm(annotated_dirs, desc="Аналіз позитивних прикладів", unit="папка"):
@@ -154,11 +154,10 @@ class ResNetDataConverter(BaseDataConverter):
                 
                 capture = frame_data.get("capture") or frame_data.get("captures", [{}])[0]
                 
-                # --> ЗМІНА 4: Отримуємо розмір зображення (лише один раз)
+                #Отримуємо розмір зображення (лише один раз)
                 if imgsz is None and capture.get("dimension"):
                     img_w, img_h = capture["dimension"]
                     imgsz = (int(img_w), int(img_h))
-                # <--
                 
                 annotations_list = frame_data.get("annotations", capture.get("annotations", []))
                 
@@ -183,7 +182,7 @@ class ResNetDataConverter(BaseDataConverter):
                 image_class_pairs.append({"img_path": img_path, "class_name": "background"})
             print(f"Додано {len(all_negative_files)} негативних прикладів до класу 'background'.")
             
-        return image_class_pairs, imgsz # <-- ЗМІНА 5
+        return image_class_pairs, imgsz
 
     def _create_imagefolder_structure(self, splits, class_names):
         """Створює структуру папок і копіює зображення."""

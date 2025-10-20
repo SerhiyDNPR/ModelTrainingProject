@@ -325,7 +325,6 @@ class CascadeRCNNTrainer(BaseTrainer):
             
             loss_dict = model(images_list, targets_list)
             
-            # --- ВИРІШЕННЯ ПРОБЛЕМИ ---
             # MMDetection може повертати списки тензорів для деяких loss'ів.
             # Цей код "розгортає" їх в єдиний список перед підсумовуванням.
             loss_components = []
@@ -335,9 +334,7 @@ class CascadeRCNNTrainer(BaseTrainer):
                 else:
                     loss_components.append(loss) # Додаємо один тензор
             
-            # Тепер підсумовуємо середні значення всіх окремих компонентів втрат.
             losses = sum(l.mean() for l in loss_components)
-            # --------------------------
             
             if self.accumulation_steps > 1: losses = losses / self.accumulation_steps
             losses.backward()
@@ -345,11 +342,19 @@ class CascadeRCNNTrainer(BaseTrainer):
             if (i + 1) % self.accumulation_steps == 0 or (i + 1) == len(data_loader):
                 optimizer.step()
                 optimizer.zero_grad()
+                
+                # Розраховуємо display_loss (правильно, з множенням)
                 display_loss = losses.item() * self.accumulation_steps if self.accumulation_steps > 1 else losses.item()
                 writer.add_scalar('Train/Loss_step', display_loss, global_step)
                 global_step += 1
-
-            progress_bar.set_postfix(loss=losses.item())
+                
+                # Встановлюємо postfix з ПРАВИЛЬНИМ 'display_loss'
+                progress_bar.set_postfix(loss=display_loss)
+            else:
+                # На проміжних кроках також розраховуємо і показуємо ПРАВИЛЬНИЙ loss
+                display_loss = losses.item() * self.accumulation_steps if self.accumulation_steps > 1 else losses.item()
+                progress_bar.set_postfix(loss=display_loss)
+                
         return global_step
 
     def _validate_one_epoch(self, model, data_loader, device, imgsz):

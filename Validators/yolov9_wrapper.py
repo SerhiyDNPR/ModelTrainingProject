@@ -5,7 +5,7 @@ from Validators.model_wrapper import ModelWrapper
 from Validators.prediction import Prediction
 
 class YOLOv9Wrapper(ModelWrapper):
-    """Обгортка для моделей YOLOv9.""" # <--- ЗМІНЕНО: Оновлено опис
+    """Обгортка для моделей YOLOv9.""" 
 
     def load(self, model_path):
         """
@@ -16,9 +16,9 @@ class YOLOv9Wrapper(ModelWrapper):
             self.model = YOLO(model_path)
             # Переконуємось, що імена класів в обгортці відповідають іменам в моделі
             self.class_names = self.model.names
-            print(f"✅ Модель YOLOv9 '{model_path}' успішно завантажена.") # <--- ЗМІНЕНО: Оновлено текст повідомлення
+            print(f"✅ Модель YOLOv9 '{model_path}' успішно завантажена.")
         except Exception as e:
-            print(f"❌ Помилка завантаження моделі YOLOv9: {e}") # <--- ЗМІНЕНО: Оновлено текст повідомлення
+            print(f"❌ Помилка завантаження моделі YOLOv9: {e}") 
             raise
 
     def predict(self, frame, conf_threshold):

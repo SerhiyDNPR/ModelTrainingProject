@@ -174,7 +174,6 @@ class RTDETRUltralyticsTrainer(BaseTrainer):
             shutil.copy(final_model_path, final_path)
             print(f"\n✅ Найкращу модель скопійовано у файл: {final_path}")
 
-        # Видаляємо змінені параметри з self.params, щоб вони не впливали на звіт
         clean_hyperparams = self.params.copy()
         clean_hyperparams.pop('project')
         clean_hyperparams.pop('name')

@@ -51,8 +51,6 @@ class RetinaNetWrapper(ModelWrapper):
             backbone_type = self._select_backbone()
             num_classes = len(self.class_names)
             
-            # --- ЗМІНА: Використання уніфікованої функції ---
-            # `pretrained=False`, оскільки ми завантажуємо ваги з файлу, а не з ImageNet
             backbone = create_fpn_backbone(backbone_type, pretrained=False)
             # -----------------------------------------------
 

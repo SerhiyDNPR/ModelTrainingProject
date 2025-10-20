@@ -105,7 +105,6 @@ def main():
         image_to_display = image.copy()
 
         # Малюємо розмітку з датасету (Ground Truth)
-        # **ВИПРАВЛЕНО**: Більш надійний спосіб знайти відповідний файл мітки
         images_base_dir = os.path.join(dataset_dir, 'images')
         relative_image_path = os.path.relpath(image_path, images_base_dir)
         relative_label_path = os.path.splitext(relative_image_path)[0] + ".txt"

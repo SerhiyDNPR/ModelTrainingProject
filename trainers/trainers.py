@@ -83,7 +83,7 @@ def collate_fn(batch):
 def log_dataset_statistics_to_tensorboard(dataset, writer: SummaryWriter):
     print("\n📊 Проводиться аналіз статистики тренувального датасету...")
     
-    # 1. Збір статистики (без змін)
+    # 1. Збір статистики
     bbox_widths, bbox_heights, bbox_areas, aspect_ratios = [], [], [], []
     for _, target in tqdm(dataset, desc="Аналіз датасету"):
         boxes = target.get('boxes')
