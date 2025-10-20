@@ -20,6 +20,7 @@ from Validators.mask_rcnn_wrapper import MaskRCNNWrapper
 from Validators.retinanet_wrapper import RetinaNetWrapper
 from Validators.ssd_wrapper import SSDWrapper
 from Validators.efficientdet_wrapper import EfficientDetWrapper
+from Validators.cascade_rcnn_wrapper import CascadeRCNNWrapper
 
 # --- ОСНОВНІ НАЛАШТУВАННЯ ---
 VIDEO_DIR = r"C:\Users\serhi\OneDrive\CD_DSST\Article_syntetic_data\Data_for_tests\Video_interceptors"
@@ -34,6 +35,7 @@ MODEL_FACTORIES = {
     "DETR": DETRWrapper,
     "Deformable DETR": DeformableDETRWrapper,
     "Faster R-CNN (ResNet50/ResNet101/MobileNet)": FasterRCNNWrapper,
+    "Cascade R-CNN (ResNet50/ResNet101)": CascadeRCNNWrapper,
     "FCOS (ResNet50/EfficientNet(?))": FCOSWrapper,
     "RT DETR (Ultralitics)": RTDETRUltralyticsWrapper,
     "Mask R-CNN (ResNet50)": MaskRCNNWrapper,
