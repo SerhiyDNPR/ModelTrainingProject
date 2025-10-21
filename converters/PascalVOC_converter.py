@@ -10,7 +10,7 @@ from tkinter import filedialog
 import xml.etree.ElementTree as ET
 from xml.dom import minidom
 from PIL import Image
-from collections import defaultdict # <-- ДОДАНО
+from collections import defaultdict
 from converters.converters import BaseDataConverter, remove_readonly
 from inputimeout import inputimeout, TimeoutOccurred
 
@@ -26,25 +26,66 @@ class PascalVOCDataConverter(BaseDataConverter):
             print(f"🧹 Очищення існуючої директорії: {self.output_dir}")
             shutil.rmtree(self.output_dir, onerror=remove_readonly)
 
-        source_dirs = sorted([p for p in self.source_dir.glob("solo*") if p.is_dir()], key=self._natural_sort_key)
-        if not source_dirs:
-            print(f"ПОМИЛКА: Не знайдено жодної директорії 'solo*' за шляхом '{self.source_dir}'")
+        # Знаходимо ВСІ директорії у вихідній папці
+        all_dirs = [p for p in self.source_dir.glob("*") if p.is_dir()]
+        
+        # 1. Знаходимо директорії з анотаціями (позитивні), які починаються з "solo"
+        annotated_dirs = sorted([p for p in all_dirs if p.name.startswith("solo")], key=self._natural_sort_key)
+        
+        # 2. Знаходимо директорії з фоном (негативні)
+        negative_dirs_list = [p for p in all_dirs if not p.name.startswith("solo")]
+        
+        negative_dir = None # За замовчуванням None
+        
+        if negative_dirs_list:
+            negative_dir = negative_dirs_list[0] # Беремо першу знайдену
+            if len(negative_dirs_list) > 1:
+                other_dirs_names = ", ".join([d.name for d in negative_dirs_list[1:]])
+                print(f"⚠️  Увага: Знайдено кілька директорій, що не є 'solo*'.")
+                print(f"   Використовується '{negative_dir.name}' як папка з фоном.")
+                print(f"   Інші знайдені папки: {other_dirs_names}")
+            else:
+                print(f"✅ Знайдено директорію з негативними прикладами (фоном): {negative_dir.name}")
+        else:
+            print(f"⚠️  Увага: Директорію з негативними прикладами (фоном) не знайдено у {self.source_dir}.")
+            print("   Вибірки будуть сформовані БЕЗ окремих фонових зображень.")
+
+        if not annotated_dirs:
+            print(f"ПОМИЛКА: Не знайдено жодної директорії 'solo*' за шляхом '{self.source_dir}'. Конвертація неможлива.")
             return
 
         # Створення базової структури папок
         for subset in ["train", "val", "test"]:
             (self.output_dir / subset).mkdir(parents=True, exist_ok=True)
 
-        annotated_dirs = source_dirs
-        negative_dir = None
-
         # 1. Виявлення класів (можна перевикористати логіку з YOLO)
         class_names = self._discover_classes(annotated_dirs)
         self._create_label_map(class_names) # Створюємо файл з мапою класів
 
         # 2. Збір всіх прикладів (позитивних та негативних)
-        positive_examples, imgsz = self._gather_annotated_examples(annotated_dirs)
-        negative_examples = self._gather_negative_examples(negative_dir)
+        
+        # --- ПОЧАТОК ЗМІНЕНОГО БЛОКУ ---
+        
+        # _gather_annotated_examples тепер повертає 3 значення: позитивні, розмір, і фон з папок 'solo'
+        positive_examples, imgsz, negatives_from_solo = self._gather_annotated_examples(annotated_dirs)
+        
+        # _gather_negative_examples збирає з окремої фонової папки
+        negatives_from_background_dir = self._gather_negative_examples(negative_dir) 
+
+        # Об'єднуємо негативні приклади з обох джерел
+        negative_examples = negatives_from_background_dir + negatives_from_solo
+        
+        if negatives_from_solo:
+            print(f"ℹ️  Додано {len(negatives_from_solo)} фонових файлів, знайдених у 'solo' папках.")
+        if negatives_from_background_dir:
+            print(f"ℹ️  Додано {len(negatives_from_background_dir)} фонових файлів з окремої директорії '{negative_dir.name}'.")
+        
+        if negative_examples:
+             print(f"✅ Всього {len(negative_examples)} негативних прикладів буде додано до вибірок.")
+        else:
+            print("⚠️  Увага: Жодного негативного прикладу не було знайдено ані в 'solo' папках, ані в окремій директорії.")
+
+        # --- КІНЕЦЬ ЗМІНЕНОГО БЛОКУ ---
 
         # 3. Розподіл даних
         print("\n🔄 Розподіл даних за вибірками (train/val/test)...")
@@ -55,9 +96,11 @@ class PascalVOCDataConverter(BaseDataConverter):
 
         # 2. Розподіляємо негативні приклади (фон) на всі 3 вибірки
         if negative_examples:
+            print(f"🔄 Розподіл {len(negative_examples)} негативних прикладів...")
             train_neg, test_neg = train_test_split(negative_examples, test_size=0.2, random_state=42)
             train_neg, val_neg = train_test_split(train_neg, test_size=0.125, random_state=42)
         else:
+            print("ℹ️  Негативні приклади не додаються до вибірок (не знайдено).")
             train_neg, val_neg, test_neg = [], [], []
         
         # 3. Формуємо фінальні вибірки, додаючи негативні приклади також до тренувальної
@@ -87,28 +130,39 @@ class PascalVOCDataConverter(BaseDataConverter):
         stats = {
             "image_size": imgsz,
             "image_count": total_images,
-            "negative_count": len(negative_examples),
+            "negative_count": len(negative_examples), # Тепер тут буде коректне число
             "class_count": len(class_names)
         }
         return stats
 
     def _gather_annotated_examples(self, annotated_dirs):
-        """Збирає інформацію про анотовані зображення."""
+        """
+        Збирає інформацію про анотовані зображення.
+        Тепер також повертає список файлів БЕЗ анотацій як негативні приклади.
+        """
         positive_examples = []
+        negative_examples_from_solo = [] # <-- НОВИЙ СПИСОК
         imgsz = None
-        skipped_files = []
-        print("\n🔎 Збір та аналіз файлів з анотаціями...")
+        
+        print("\n🔎 Збір та аналіз файлів з анотаціями (і фону з 'solo' папок)...")
         for directory in tqdm(annotated_dirs, desc="Аналіз позитивних прикладів", unit="папка"):
             json_files = [p.parent / "step0.frame_data.json" for p in directory.glob("sequence.*/step0.camera.png") if (p.parent / "step0.frame_data.json").exists()]
+            
             for json_path in json_files:
                 img_path = json_path.parent / "step0.camera.png"
+                current_imgsz_from_json = None # Розмір конкретного зображення
+                
                 with open(json_path) as f:
                     frame_data = json.load(f)
 
                 capture = frame_data.get("capture") or frame_data.get("captures", [{}])[0]
-                if imgsz is None and capture.get("dimension"):
+                
+                # Отримуємо розмір з JSON (якщо є)
+                if capture.get("dimension"):
                     img_w, img_h = capture["dimension"]
-                    imgsz = (int(img_w), int(img_h))
+                    current_imgsz_from_json = (int(img_w), int(img_h))
+                    if imgsz is None:
+                        imgsz = current_imgsz_from_json # Встановлюємо загальний розмір з першого файлу
 
                 voc_annotations = []
                 annotations_list = frame_data.get("annotations", capture.get("annotations", []))
@@ -124,23 +178,30 @@ class PascalVOCDataConverter(BaseDataConverter):
                             box = [int(px_x), int(px_y), int(px_x + px_w), int(px_y + px_h)]
                             voc_annotations.append({"class_name": class_name, "box": box})
 
+                # Використовуємо розмір з поточного файлу, або загальний, якщо в файлі не знайдено
+                image_size_for_this_file = current_imgsz_from_json or imgsz 
+
                 if voc_annotations:
-                    positive_examples.append({"img_path": img_path, "img_size": imgsz, "annotations": voc_annotations})
+                    # Це позитивний приклад
+                    positive_examples.append({"img_path": img_path, "img_size": image_size_for_this_file, "annotations": voc_annotations})
                 else:
-                    skipped_files.append(img_path)
+                    # --- ЗМІНА ---
+                    # Це негативний приклад (фон) з папки 'solo'
+                    negative_examples_from_solo.append({"img_path": img_path, "img_size": image_size_for_this_file, "annotations": []})
 
         print(f"\nЗнайдено {len(positive_examples)} позитивних прикладів з анотаціями.")
-        if skipped_files:
-            print(f"⚠️  Пропущено {len(skipped_files)} файлів через відсутність анотацій:")
-            for file_path in skipped_files:
-                print(f"   - {file_path}")
-        return positive_examples, imgsz
+        
+        # Повідомлення тепер інформативне, а не попередження
+        if negative_examples_from_solo:
+            print(f"ℹ️  Знайдено {len(negative_examples_from_solo)} файлів без анотацій (фон) у 'solo' папках. Вони будуть додані до вибірки.")
+        
+        return positive_examples, imgsz, negative_examples_from_solo # <-- ПОВЕРТАЄМО 3 ЗНАЧЕННЯ
 
     def _gather_negative_examples(self, negative_dir):
-        """Збирає інформацію про негативні приклади."""
+        """Збирає інформацію про негативні приклади (з окремої папки)."""
         negative_examples = []
         if negative_dir:
-            print("🔎 Збір файлів з негативними прикладами...")
+            print(f"🔎 Збір файлів з негативними прикладами з '{negative_dir.name}'...")
             all_negative_files = [p for p in negative_dir.glob("sequence.*/step0.camera.png")]
             for img_path in tqdm(all_negative_files, desc="Аналіз негативних прикладів"):
                 try:
@@ -152,7 +213,12 @@ class PascalVOCDataConverter(BaseDataConverter):
                     continue
                 
                 negative_examples.append({"img_path": img_path, "img_size": current_img_size, "annotations": []})
-            print(f"Знайдено {len(negative_examples)} негативних прикладів.")
+            
+            if not negative_examples:
+                print(f"⚠️  Увага: Папка '{negative_dir.name}' не містить файлів за шаблоном 'sequence.*/step0.camera.png'.")
+            else:
+                print(f"Знайдено {len(negative_examples)} негативних прикладів у окремій папці.")
+        
         return negative_examples
 
     def _create_voc_structure(self, splits):
@@ -375,9 +441,13 @@ class PascalVOCDataConverter(BaseDataConverter):
 
         source_dirs_list = [p for p in self.source_dir.glob("solo*") if p.is_dir()]
         if not source_dirs_list:
-            print(f"ПОМИЛКА: Не знайдено папок 'solo*' в {self.source_dir}")
-            return None
-
+            # Якщо 'solo*' не знайдено, спробуємо знайти будь-яку папку, 
+            # щоб хоча б спробувати знайти зображення
+            source_dirs_list = [p for p in self.source_dir.glob("*") if p.is_dir()]
+            if not source_dirs_list:
+                print(f"ПОМИЛКА: Не знайдено жодних папок в {self.source_dir}")
+                return None
+        
         for directory in source_dirs_list:
             try:
                 image_path = next(directory.glob("sequence.*/*.png"))
