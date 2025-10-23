@@ -49,7 +49,6 @@ class TrainingManager:
             sys.exit(1)
 
     def _initialize_components(self):
-        # Цей метод залишається без змін
         if "YOLO" in self.framework_name:
             self.converter = YOLODataConverter(
                 source_dir=self.config.PERCEPTION_SOURCE_DIR,

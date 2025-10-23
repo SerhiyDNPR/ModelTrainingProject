@@ -175,9 +175,9 @@ SSD_TRAIN_PARAMS = {
 
 EFFICIENTDET_TRAIN_PARAMS = {
     'epochs': 30,
-    'batch': 16,
-    'accumulation_steps': 1, # Ефективний batch size = 16
-    'lr': 0.0002, # EfficientDet часто використовує трохи вищий LR
+    'batch': 2,
+    'accumulation_steps': 8, # Ефективний batch size = 16
+    'lr': 0.0001, # EfficientDet часто використовує трохи вищий LR
     'device': 'cuda' if torch.cuda.is_available() else 'cpu',
     'project': 'runs/efficientdet',
     'lr_scheduler_step_size': 10,
