@@ -20,6 +20,10 @@ except ImportError:
     class TimeoutOccurred(Exception):
         pass
     def inputimeout(prompt, timeout):
+        # Якщо inputimeout не встановлено, використовуємо звичайний input
+        # і додаємо повідомлення про необхідність встановлення.
+        if 'автоматично' in prompt:
+             print("⚠️ Для роботи таймауту встановіть 'pip install inputimeout'")
         return input(prompt)
 
 try:
@@ -105,7 +109,7 @@ def _create_model(num_classes, model_name='tf_efficientdet_d0', image_size=(512,
     config = get_efficientdet_config(model_name)
     config.num_classes = num_classes
     config.image_size = image_size
-    # Налаштування Focal Loss (взято з попередніх налаштувань)
+    # Налаштування Focal Loss (взято з config.py)
     config.label_smoothing = 0.01
     config.focal_loss_gamma = 1.5
     config.focal_loss_alpha = 0.75
@@ -187,10 +191,13 @@ class EfficientDetTrainer(BaseTrainer):
         self.accumulation_steps = self.params.get('accumulation_steps', 8)
 
         train_loader, val_loader, num_classes = self._prepare_dataloaders(batch_size, imgsz)
+        
+        # --- ВІДНОВЛЕНО: Виведення статистики датасету ---
+        log_dataset_statistics_to_tensorboard(train_loader.dataset, SummaryWriter(log_dir=os.path.join(project_dir, 'temp_logs')))
+        print(f"📊 Знайдено {num_classes} класів. Навчання моделі для їх розпізнавання.")
+        # ---------------------------------------------------
 
         model = self._get_model(num_classes)
-        
-        # --- ПОВЕРНУТО ДО СТАНДАРТНОГО ОПТИМІЗАТОРА PYTORCH ---
         optimizer = optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=learning_rate, weight_decay=1e-4)
         lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-6)
         
@@ -203,14 +210,33 @@ class EfficientDetTrainer(BaseTrainer):
         
         model = DetBenchTrain(model).to(device)
 
+        warmup_epochs = 1
+        try:
+            prompt = f"\nВведіть кількість епох для 'прогріву' (warm-up) [автоматично '{warmup_epochs}' через 10с]: "
+            user_input = inputimeout(prompt=prompt, timeout=10).strip()
+            if user_input and user_input.isdigit() and int(user_input) > 0:
+                warmup_epochs = int(user_input)
+                print(f"✅ Встановлено {warmup_epochs} епох для прогріву.")
+            else:
+                print(f"✅ Використовується значення за замовчуванням: {warmup_epochs} епоха.")
+        except TimeoutOccurred:
+            print(f"\nЧас на введення вичерпано. Використовується значення за замовчуванням: {warmup_epochs} епоха.")
+        except Exception:
+            print(f"\nВикористовується значення за замовчуванням: {warmup_epochs} епоха.")
+
+        warmup_steps = warmup_epochs * len(train_loader)
+        if warmup_steps > 0:
+            print(f"🔥 Увімкнено 'прогрів' (warm-up) на {warmup_steps} кроків ({warmup_epochs} епох(и)).")
+        
         print(f"\n🚀 Розпочинаємо тренування на {epochs} епох...")
         for epoch in range(start_epoch, epochs):
             # Передаємо model, optimizer, data_loader, device, epoch, writer, global_step
-            global_step = self._train_one_epoch(model, optimizer, train_loader, device, epoch, writer, global_step)
+            global_step = self._train_one_epoch(model, optimizer, train_loader, device, epoch, writer, global_step, target_lr=learning_rate, warmup_steps=warmup_steps, warmup_start_lr=1e-7)
             
-            # --- ВИПРАВЛЕНИЙ ВИКЛИК: Передано imgsz ---
-            val_map = self._validate_one_epoch(model, val_loader, device, imgsz)
-            # ----------------------------------------
+            # --- ВІДНОВЛЕНО: Вивід mAP у консоль ---
+            val_map = self._validate_one_epoch(model, val_loader, device, imgsz) 
+            print(f"\nEpoch {epoch+1}/{epochs} | Validation mAP: {val_map:.4f}")
+            # -------------------------------------
             
             lr_scheduler.step()
             
@@ -258,15 +284,11 @@ class EfficientDetTrainer(BaseTrainer):
         return train_loader, val_loader, num_classes
 
     # === ФІНАЛЬНИЙ МЕТОД _train_one_epoch ===
-    def _train_one_epoch(self, model, optimizer, data_loader, device, epoch, writer, global_step):
+    def _train_one_epoch(self, model, optimizer, data_loader, device, epoch, writer, global_step, target_lr, warmup_steps, warmup_start_lr):
         model.train()
         progress_bar = tqdm(data_loader, desc=f"Epoch {epoch + 1} [Train]")
         optimizer.zero_grad()
         
-        target_lr = self.params.get('lr', 0.0005)
-        warmup_steps = 1 * len(data_loader)
-        warmup_start_lr = 1e-7
-
         for i, (images, targets) in enumerate(progress_bar):
             if global_step < warmup_steps:
                 lr_scale = global_step / warmup_steps
