@@ -183,7 +183,7 @@ class EfficientDetTrainer(BaseTrainer):
         project_dir = os.path.join(self.params.get('project', 'runs/efficientdet'), f"{self.backbone_choice}{self.training_mode}")
         epochs = self.params.get('epochs', 30)
         batch_size = self.params.get('batch', 2)
-        learning_rate = 0.002
+        learning_rate = self.params.get('lr', 0.0005)
         self.accumulation_steps = self.params.get('accumulation_steps', 8)
 
         train_loader, val_loader, num_classes = self._prepare_dataloaders(batch_size, imgsz)
