@@ -14,25 +14,23 @@ from trainers.trainers import BaseTrainer, collate_fn, log_dataset_statistics_to
 from torchmetrics.detection import MeanAveragePrecision
 from torch.utils.tensorboard import SummaryWriter
 
-# Спроба імпорту inputimeout для запиту з таймаутом
 try:
     from inputimeout import inputimeout, TimeoutOccurred
 except ImportError:
     class TimeoutOccurred(Exception):
         pass
     def inputimeout(prompt, timeout):
-        return input(prompt) # Заглушка, якщо inputimeout не встановлено
+        return input(prompt)
 
-# EfficientDet вимагає сторонньої бібліотеки effdet.
 try:
-    # Важливо: імпортуємо DetBenchPredict для валідації
     from effdet import get_efficientdet_config, EfficientDet, DetBenchTrain, DetBenchPredict
     from effdet.efficientdet import HeadNet
 except ImportError:
     print("Помилка: бібліотеку 'effdet' не знайдено. Встановіть її: pip install effdet")
     exit(1)
 
-# Словник з конфігураціями моделей: назва та рекомендований розмір зображення (H, W)
+# Видалено імпорти timm, які викликають проблеми
+
 BACKBONE_CONFIGS = {
     '1': ('tf_efficientdet_d0', (512, 512)),
     '2': ('tf_efficientdet_d1', (640, 640)),
@@ -44,14 +42,12 @@ BACKBONE_CONFIGS = {
     '8': ('tf_efficientdet_d7', (1536, 1536)),
 }
 
-
 class DetectionTransforms:
-    """Трансформації, які масштабують бокси та зображення."""
     def __init__(self, is_train=False, cat_id_map=None, imgsz=None):
         self.is_train = is_train
         self.cat_id_map = cat_id_map
         if isinstance(imgsz, int):
-            self.imgsz = (imgsz, imgsz) # (H, W)
+            self.imgsz = (imgsz, imgsz)
         elif isinstance(imgsz, (tuple, list)) and len(imgsz) == 2:
             self.imgsz = imgsz
         else:
@@ -68,7 +64,6 @@ class DetectionTransforms:
             image = F.hflip(image)
 
         image = F.to_tensor(image)
-        # Стандартна нормалізація (EffDet часто має це вбудовано, але краще додати тут)
         image = F.normalize(image, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 
         boxes, labels = [], []
@@ -78,23 +73,27 @@ class DetectionTransforms:
         if target:
             for ann in target:
                 label = self.cat_id_map.get(ann['category_id'])
-                if label is None: continue
+                if label is None:
+                    continue # Ігноруємо відсутні класи
                 x_min, y_min, w, h = ann['bbox']
-                if w < 1 or h < 1: continue
+                if w < 0.1 or h < 0.1:
+                    continue # Ігноруємо дуже малі бокси
                 x_max, y_max = x_min + w, y_min + h
                 x_min, x_max = x_min * w_scale, x_max * w_scale
                 y_min, y_max = y_min * h_scale, y_max * h_scale
 
                 if hflip:
                     img_w = self.imgsz[1]
-                    x_min, x_max = img_w - x_max, img_w - x_min # Обмін місцями
+                    x_min, x_max = img_w - x_max, img_w - x_min
 
                 x_min = max(0, x_min); y_min = max(0, y_min)
                 x_max = min(self.imgsz[1], x_max); y_max = min(self.imgsz[0], y_max)
 
-                if x_max > x_min and y_max > y_min:
-                    boxes.append([x_min, y_min, x_max, y_max])
-                    labels.append(label)
+                if x_max <= x_min or y_max <= y_min:
+                    continue # Ігноруємо невалідні scaled бокси
+
+                boxes.append([x_min, y_min, x_max, y_max])
+                labels.append(label + 1)  # 1-based for effdet (клас 0 зарезервований для фону)
 
         boxes = torch.as_tensor(boxes, dtype=torch.float32)
         labels = torch.as_tensor(labels, dtype=torch.int64)
@@ -102,22 +101,20 @@ class DetectionTransforms:
         final_target = {"boxes": boxes, "labels": labels}
         return image, final_target
 
-
 def _create_model(num_classes, model_name='tf_efficientdet_d0', image_size=(512, 512), pretrained=True):
-    """Створює модель EfficientDet, використовуючи внутрішні функції effdet."""
     config = get_efficientdet_config(model_name)
     config.num_classes = num_classes
     config.image_size = image_size
-    
-    # Використовуємо EfficientDet від effdet
+    # Налаштування Focal Loss (взято з попередніх налаштувань)
+    config.label_smoothing = 0.01
+    config.focal_loss_gamma = 1.5
+    config.focal_loss_alpha = 0.75
+    config.box_loss_weight = 50.0
     model = EfficientDet(config, pretrained_backbone=pretrained)
-    # Замінюємо classification head для нового num_classes
     model.class_net = HeadNet(config, num_outputs=num_classes)
     return model
 
-
 class EfficientDetTrainer(BaseTrainer):
-    """Керує процесом навчання моделі EfficientDet."""
     def __init__(self, training_params, dataset_dir):
         super().__init__(training_params, dataset_dir)
         self.backbone_choice = None
@@ -125,7 +122,6 @@ class EfficientDetTrainer(BaseTrainer):
         self.image_size = None
 
     def _select_configuration(self):
-        # ... (Логіка вибору backbone та режиму навчання)
         print("\n   Оберіть 'хребет' (backbone) для EfficientDet:")
         for key, (name, size) in BACKBONE_CONFIGS.items():
             model_id = name.replace('tf_efficientdet_', '').upper()
@@ -152,7 +148,7 @@ class EfficientDetTrainer(BaseTrainer):
                 print("✅ Обрано режим: Full training.")
             else:
                 print("   ❌ Невірний вибір. Будь ласка, введіть 1 або 2.")
-        
+    
     def _get_model_name(self):
         if not self.backbone_choice:
             return "EfficientDet"
@@ -161,92 +157,69 @@ class EfficientDetTrainer(BaseTrainer):
         return f"EfficientDet ({backbone_str} {mode_str})"
 
     def _get_model(self, num_classes):
-        """Завантажує модель EfficientDet."""
         print(f"🔧 Створення моделі: {self._get_model_name()}")
-        
-        # Використовуємо оригінальний _create_model, який використовує effdet.get_efficientdet_config
         model = _create_model(
             num_classes,
             self.backbone_choice,
             image_size=self.image_size, 
             pretrained=True
         )
-
         if self.training_mode == '_finetune':
-            print("❄️ Заморожування ваг backbone. Навчання тільки голови.")
-            # Заморожуємо параметри backbone, які мають префікс 'model.backbone.'
             for name, param in model.named_parameters():
                 if name.startswith('backbone.'):
                     param.requires_grad = False
                 else:
                     param.requires_grad = True
-        else:
-            print("🔥 Усі ваги моделі розморожено для повного навчання.")
-            for param in model.parameters():
-                param.requires_grad = True
-        
         return model
 
     def start_or_resume_training(self, dataset_stats):
-        if self.training_mode is None or self.backbone_choice is None:
+        if self.backbone_choice is None or self.training_mode is None:
             self._select_configuration()
 
-        imgsz = self.image_size # <--- imgsz визначено
+        imgsz = self.image_size
         print(f"\n--- Запуск тренування для {self._get_model_name()} ---")
-        
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        print(f"🔌 Обрано пристрій для навчання: {str(device).upper()}")
         
-        # ... (настройка гіперпараметрів)
-        project_dir = os.path.join(self.params.get('project', 'runs/efficientdet'),
-                                   f"{self.backbone_choice}{self.training_mode}")
+        project_dir = os.path.join(self.params.get('project', 'runs/efficientdet'), f"{self.backbone_choice}{self.training_mode}")
         epochs = self.params.get('epochs', 30)
         batch_size = self.params.get('batch', 2)
-        learning_rate = self.params.get('lr', 0.0005)
-        step_size = self.params.get('lr_scheduler_step_size', 10)
-        gamma = self.params.get('lr_scheduler_gamma', 0.1)
+        learning_rate = 0.002
         self.accumulation_steps = self.params.get('accumulation_steps', 8)
 
-        # ... (Завантаження даних та моделі)
-        train_loader, val_loader, num_classes = self._prepare_dataloaders(batch_size, imgsz=imgsz)
-        
-        # 1. Створення базової моделі
-        base_model = self._get_model(num_classes)
-        # 2. Обгортання для тренування (з втратами та анкорами)
-        model = DetBenchTrain(base_model, create_labeler=True).to(device)
+        train_loader, val_loader, num_classes = self._prepare_dataloaders(batch_size, imgsz)
 
-        # ... (Оптимізатор та планувальник)
-        optimizer = optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=learning_rate, weight_decay=1e-4)
-        lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=step_size, gamma=gamma)
+        model = self._get_model(num_classes)
         
-        # ... (Warm-up, Checkpoints, TensorBoard)
+        # --- ПОВЕРНУТО ДО СТАНДАРТНОГО ОПТИМІЗАТОРА PYTORCH ---
+        optimizer = optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=learning_rate, weight_decay=1e-4)
+        lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-6)
+        
         run_name, checkpoint_path = self._check_for_resume(project_dir)
         start_epoch, best_map, global_step = 0, 0.0, 0
+        
         run_dir = os.path.join(project_dir, run_name)
         os.makedirs(run_dir, exist_ok=True)
         writer = SummaryWriter(log_dir=os.path.join(run_dir, 'tensorboard_logs'))
         
-        warmup_epochs = 1
-        warmup_steps = warmup_epochs * len(train_loader)
-        warmup_start_lr = 1e-7
-        target_lr = learning_rate
+        model = DetBenchTrain(model).to(device)
 
         print(f"\n🚀 Розпочинаємо тренування на {epochs} епох...")
         for epoch in range(start_epoch, epochs):
+            # Передаємо model, optimizer, data_loader, device, epoch, writer, global_step
             global_step = self._train_one_epoch(model, optimizer, train_loader, device, epoch, writer, global_step)
             
-            # --- ВИПРАВЛЕННЯ ВИКЛИКУ: Додано imgsz ---
-            val_map = self._validate_one_epoch(model, val_loader, device, imgsz) 
+            # --- ВИПРАВЛЕНИЙ ВИКЛИК: Передано imgsz ---
+            val_map = self._validate_one_epoch(model, val_loader, device, imgsz)
             # ----------------------------------------
             
             lr_scheduler.step()
             
-            # ... (Логування та збереження чекпоінтів)
             writer.add_scalar('Validation/mAP', val_map, epoch)
 
             is_best = val_map > best_map
             if is_best:
                 best_map = val_map
+
             self.save_checkpoint({
                 'epoch': epoch + 1, 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(), 'best_map': best_map,
@@ -254,16 +227,17 @@ class EfficientDetTrainer(BaseTrainer):
             }, is_best, run_dir)
 
         writer.close()
-        # ... (Формування summary)
+        
         summary = {
             "model_name": self._get_model_name(),
+            "image_size": self.image_size,
             "best_map": f"{best_map:.4f}",
             "best_model_path": os.path.join(run_dir, "best_model.pth"),
             "hyperparameters": self.params
         }
         return summary
 
-    def _prepare_dataloaders(self, batch_size, imgsz=None):
+    def _prepare_dataloaders(self, batch_size, imgsz):
         train_img_dir = os.path.join(self.dataset_dir, 'train')
         train_ann_file = os.path.join(self.dataset_dir, 'annotations', 'instances_train.json')
         val_img_dir = os.path.join(self.dataset_dir, 'val')
@@ -273,7 +247,7 @@ class EfficientDetTrainer(BaseTrainer):
         coco_cat_ids = sorted(temp_dataset.coco.cats.keys())
         cat_id_to_label = {cat_id: i for i, cat_id in enumerate(coco_cat_ids)}
         num_classes = len(coco_cat_ids)
-
+        
         train_dataset = CocoDetection(root=train_img_dir, annFile=train_ann_file,
                                       transforms=DetectionTransforms(is_train=True, cat_id_map=cat_id_to_label, imgsz=imgsz))
         val_dataset = CocoDetection(root=val_img_dir, annFile=val_ann_file,
@@ -283,12 +257,12 @@ class EfficientDetTrainer(BaseTrainer):
         val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn, num_workers=0, pin_memory=True)
         return train_loader, val_loader, num_classes
 
+    # === ФІНАЛЬНИЙ МЕТОД _train_one_epoch ===
     def _train_one_epoch(self, model, optimizer, data_loader, device, epoch, writer, global_step):
         model.train()
         progress_bar = tqdm(data_loader, desc=f"Epoch {epoch + 1} [Train]")
         optimizer.zero_grad()
         
-        # Параметри Warm-up
         target_lr = self.params.get('lr', 0.0005)
         warmup_steps = 1 * len(data_loader)
         warmup_start_lr = 1e-7
@@ -301,14 +275,12 @@ class EfficientDetTrainer(BaseTrainer):
 
             images_tensor = torch.stack(images).to(device)
             
-            # --- ФІНАЛЬНЕ ВИПРАВЛЕННЯ: Агресивне Об'єднання Цілей у Словник ---
-            
+            # --- Створення цільових даних у форматі effdet (Dict з List[Tensor]) ---
             batch_bboxes = []
             batch_classes = []
             img_scales = []
             img_sizes = []
             
-            # targets - це List[Dict] (довжина = batch_size)
             for target_item in targets:
                 if target_item['boxes'].numel() == 0:
                     bx = torch.zeros((0, 4), dtype=torch.float32, device=device)
@@ -320,12 +292,9 @@ class EfficientDetTrainer(BaseTrainer):
                 batch_bboxes.append(bx)
                 batch_classes.append(cl)
                 
-                # Додаємо елементи, що мають бути float тензорами
                 img_scales.append(torch.tensor(1.0, dtype=torch.float32, device=device))
-                # Розмір одного зображення, повторений для кожного елемента батчу
                 img_sizes.append(torch.tensor(images_tensor[0].shape[1:], dtype=torch.float32, device=device))
 
-            # Створюємо ОДИН СЛОВНИК ЗІ СПИСКАМИ ТЕНЗОРІВ для DetBenchTrain
             targets_for_bench = {
                 'bbox': batch_bboxes, 
                 'cls': batch_classes, 
@@ -340,7 +309,7 @@ class EfficientDetTrainer(BaseTrainer):
             try:
                 loss_dict = model(images_tensor, targets_for_bench)
             except Exception as e:
-                # Включає TypeError та RuntimeError
+                # Включає TypeError list indices must be integers or slices, not str
                 print(f"[DEBUG] ❌ Помилка в моделі на batch {i}: {e}. Пропуск.")
                 optimizer.zero_grad()
                 continue
@@ -373,11 +342,12 @@ class EfficientDetTrainer(BaseTrainer):
                  progress_bar.set_postfix(loss=loss.item() * self.accumulation_steps, cls=cls_loss, box=box_loss)
 
         return global_step
+    # === КІНЕЦЬ _train_one_epoch ===
 
 
+    # === ВАЛІДАЦІЙНИЙ МЕТОД ===
     def _validate_one_epoch(self, model, data_loader, device, imgsz):
         model.eval()
-        # Створюємо модель для передбачення
         pred_model = DetBenchPredict(model.model).to(device)
         pred_model.eval()
 
@@ -407,9 +377,7 @@ class EfficientDetTrainer(BaseTrainer):
         except Exception as e:
             print(f"Помилка при обчисленні mAP: {e}")
             return 0.0
-    # === КІНЕЦЬ _validate_one_epoch ===
 
-    # Використовуємо метод із FasterRCNNTrainer для відновлення навчання
     from trainers.FasterRCNNTrainer import FasterRCNNTrainer
     _check_for_resume = FasterRCNNTrainer._check_for_resume_rcnn
 
