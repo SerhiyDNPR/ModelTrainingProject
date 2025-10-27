@@ -1,7 +1,9 @@
 # trainers/EfficientDet_trainer.py
 
+import math
 import os
 import datetime as dt
+import numpy as np
 import shutil
 import torch
 import torch.optim as optim
@@ -246,7 +248,44 @@ class EfficientDetTrainer(BaseTrainer):
                 if len(labels) > 0:
                     logging.debug(f"Batch {i}, target {idx}: labels={labels.cpu().numpy().tolist()}")
             
-            loss_dict = model(images, targets)
+# --- ПОЧАТОК ВИПРАВЛЕННЯ ---
+            # DetBenchTrain очікує один словник згрупованих тензорів,
+            # а не список словників. Ми повинні вручну згрупувати 'targets'.
+
+            # Знаходимо максимальну кількість боксів у батчі для педдінгу
+            max_num_boxes = 0
+            for t in targets:
+                if t['boxes'].shape[0] > max_num_boxes:
+                    max_num_boxes = t['boxes'].shape[0]
+            
+            # Якщо max_num_boxes = 0 (наприклад, усі зображення негативні),
+            # створюємо тензори-заглушки, щоб уникнути помилок розміру
+            if max_num_boxes == 0:
+                max_num_boxes = 1 
+                
+            B = len(targets)
+            # Створюємо нульові тензори для згрупованих даних
+            batched_boxes = torch.zeros((B, max_num_boxes, 4), dtype=torch.float32, device=device)
+            batched_labels = torch.zeros((B, max_num_boxes), dtype=torch.int64, device=device)
+            
+            # Заповнюємо згруповані тензори даними з 'targets'
+            for i, t in enumerate(targets):
+                num_boxes = t['boxes'].shape[0]
+                if num_boxes > 0:
+                    batched_boxes[i, :num_boxes] = t['boxes']
+                    batched_labels[i, :num_boxes] = t['labels']
+                    
+            # Створюємо фінальний словник 'batched_target' з ключами,
+            # які очікує DetBenchTrain ('bbox' та 'cls')
+            batched_target = {
+                'bbox': batched_boxes,
+                'cls': batched_labels
+            }
+            
+            # Викликаємо модель з коректно відформатованим 'batched_target'
+            loss_dict = model(images, batched_target)
+            # --- КІНЕЦЬ ВИПРАВЛЕННЯ ---
+
             losses = sum(loss for loss in loss_dict.values())
             loss_value = losses.item()
 
@@ -364,7 +403,7 @@ class EfficientDetTrainer(BaseTrainer):
         
         with torch.no_grad():
             progress_bar = tqdm(data_loader, desc="Validating")
-            for images, targets in progress_bar:
+            for images, targets, indices in progress_bar:
                 images_tensor = torch.stack(images).to(device)
                 detections = pred_model(images_tensor)
 
