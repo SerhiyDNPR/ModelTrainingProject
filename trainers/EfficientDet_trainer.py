@@ -48,9 +48,10 @@ BACKBONE_CONFIGS = {
 }
 
 class DetectionTransforms:
-    def __init__(self, is_train=False, cat_id_map=None, imgsz=None):
+    def __init__(self, is_train=False, cat_id_map=None, imgsz=None, dataset=None):
         self.is_train = is_train
         self.cat_id_map = cat_id_map
+        self.dataset = dataset
         if isinstance(imgsz, int):
             self.imgsz = (imgsz, imgsz)
         elif isinstance(imgsz, (tuple, list)) and len(imgsz) == 2:
@@ -60,7 +61,7 @@ class DetectionTransforms:
         if self.cat_id_map is None:
             raise ValueError("cat_id_map повинен бути наданий.")
 
-    def __call__(self, image, target):
+    def __call__(self, image, target, idx=None):
         w_orig, h_orig = image.size
         logging.debug(f"Оригінальні розміри зображення: {w_orig}x{h_orig}, цільовий розмір: {self.imgsz}")
         
@@ -69,7 +70,7 @@ class DetectionTransforms:
         new_h, new_w = int(h_orig * ratio), int(w_orig * ratio)
         image = F.resize(image, (new_h, new_w))
         
-        # Padding до цільового розміру, гарантуємо цілі числа
+        # Padding до цільового розміру
         pad_h = int((self.imgsz[0] - new_h) // 2)
         pad_w = int((self.imgsz[1] - new_w) // 2)
         pad_h_right = int(self.imgsz[0] - new_h - pad_h)
@@ -115,15 +116,16 @@ class DetectionTransforms:
                     continue
 
                 boxes.append([x_min, y_min, x_max, y_max])
-                labels.append(label + 1)
+                labels.append(label + 1)  # Potential issue to address in next step
 
         if removed_boxes > 0:
             logging.warning(f"Видалено {removed_boxes} невалідних боксів для зображення.")
 
         boxes = torch.as_tensor(boxes, dtype=torch.float32)
         labels = torch.as_tensor(labels, dtype=torch.int64)
+        image_id = target[0]['image_id'] if target else None
 
-        final_target = {"boxes": boxes, "labels": labels, "image_id": target[0]['image_id'] if target else None}
+        final_target = {"boxes": boxes, "labels": labels, "image_id": image_id}
         return image, final_target
 
 def _create_model(num_classes, model_name='tf_efficientdet_d0', image_size=(512, 512), pretrained=True):
@@ -208,114 +210,69 @@ class EfficientDetTrainer(BaseTrainer):
         self.cat_id_to_label = {cat_id: i for i, cat_id in enumerate(coco_cat_ids)}
         self.label_to_cat_id = {i: cat_id for cat_id, i in self.cat_id_to_label.items()}
         num_classes = len(coco_cat_ids)
-        
-        train_dataset = CocoDetection(root=train_img_dir, annFile=train_ann_file,
-                                     transforms=DetectionTransforms(is_train=True, cat_id_map=self.cat_id_to_label, imgsz=imgsz))
-        val_dataset = CocoDetection(root=val_img_dir, annFile=val_ann_file,
-                                   transforms=DetectionTransforms(is_train=False, cat_id_map=self.cat_id_to_label, imgsz=imgsz))
+        logging.info(f"COCO Category IDs: {coco_cat_ids}")
+        logging.info(f"cat_id_to_label: {self.cat_id_to_label}")
+        logging.info(f"label_to_cat_id: {self.label_to_cat_id}")
+        logging.info(f"Number of classes: {num_classes}")
 
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn, num_workers=0, pin_memory=True)
-        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn, num_workers=0, pin_memory=True)
+        train_dataset = CocoDetection(root=train_img_dir, annFile=train_ann_file,
+                                    transforms=DetectionTransforms(is_train=True, cat_id_map=self.cat_id_to_label, imgsz=imgsz))
+        val_dataset = CocoDetection(root=val_img_dir, annFile=val_ann_file,
+                                transforms=DetectionTransforms(is_train=False, cat_id_map=self.cat_id_to_label, imgsz=imgsz))
+
+        def indexed_collate_fn(batch):
+            batch_with_indices = [(img, tgt, i) for i, (img, tgt) in enumerate(batch)]
+            images, targets = collate_fn([(img, tgt) for img, tgt, _ in batch_with_indices])
+            indices = [idx for _, _, idx in batch_with_indices]
+            return images, targets, indices
+
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=indexed_collate_fn, num_workers=0, pin_memory=True)
+        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=indexed_collate_fn, num_workers=0, pin_memory=True)
         return train_loader, val_loader, num_classes
 
     def _train_one_epoch(self, model, optimizer, data_loader, device, epoch, writer, global_step, target_lr, warmup_steps, warmup_start_lr):
         model.train()
-        progress_bar = tqdm(data_loader, desc=f"Epoch {epoch + 1} [Train]")
-        optimizer.zero_grad()
-        skipped_batches = 0
-        
-        for i, (images, targets) in enumerate(progress_bar):
+        loss_total = 0
+        loss_count = 0
+        progress_bar = tqdm(data_loader, desc=f"Epoch {epoch}")
+
+        for i, (images, targets, indices) in enumerate(progress_bar):  # Updated to unpack indices
+            images = torch.stack(images).to(device)
+            targets = [{k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in t.items()} for t in targets]
+            
+            # Log labels for debugging
+            for idx, target in enumerate(targets):
+                labels = target.get('labels', [])
+                if len(labels) > 0:
+                    logging.debug(f"Batch {i}, target {idx}: labels={labels.cpu().numpy().tolist()}")
+            
+            loss_dict = model(images, targets)
+            losses = sum(loss for loss in loss_dict.values())
+            loss_value = losses.item()
+
+            if not math.isfinite(loss_value):
+                logging.warning(f"Loss is {loss_value}, stopping training")
+                return loss_total / loss_count if loss_count > 0 else 0, global_step
+
+            optimizer.zero_grad()
+            losses.backward()
+            optimizer.step()
+
+            global_step += 1
             if global_step < warmup_steps:
-                lr_scale = global_step / warmup_steps
-                new_lr = warmup_start_lr + lr_scale * (target_lr - warmup_start_lr)
-                for g in optimizer.param_groups:
-                    g['lr'] = new_lr
+                lr = warmup_start_lr + (target_lr - warmup_start_lr) * global_step / warmup_steps
+                for param_group in optimizer.param_groups:
+                    param_group['lr'] = lr
 
-            images_tensor = torch.stack(images).to(device)
-            
-            batch_bboxes = []
-            batch_classes = []
-            img_scales = []
-            img_sizes = []
-            
-            for target_item in targets:
-                if target_item['boxes'].numel() == 0:
-                    bx = torch.zeros((0, 4), dtype=torch.float32, device=device)
-                    cl = torch.zeros((0,), dtype=torch.int64, device=device)
-                else:
-                    bx = target_item['boxes'].to(device).float()
-                    cl = target_item['labels'].to(device).long()
-                
-                batch_bboxes.append(bx)
-                batch_classes.append(cl)
-                
-                img_scales.append(torch.tensor(1.0, dtype=torch.float32, device=device))
-                img_sizes.append(torch.tensor(images_tensor[0].shape[1:], dtype=torch.float32, device=device))
+            loss_total += loss_value
+            loss_count += 1
+            progress_bar.set_postfix(loss=loss_value, avg_loss=loss_total/loss_count, lr=optimizer.param_groups[0]['lr'])
 
-            targets_for_bench = {
-                'bbox': batch_bboxes,
-                'cls': batch_classes,
-                'img_scale': img_scales,
-                'img_size': img_sizes
-            }
+            if writer:
+                writer.add_scalar('Loss/train', loss_value, global_step)
+                writer.add_scalar('LR', optimizer.param_groups[0]['lr'], global_step)
 
-            if all(t.numel() == 0 for t in batch_bboxes):
-                skipped_batches += 1
-                optimizer.zero_grad()
-                continue
-            
-            try:
-                loss_dict = model(images_tensor, targets_for_bench)
-                logging.debug(f"Batch {i} loss_dict: {loss_dict}")
-            except Exception as e:
-                print(f"[DEBUG] ❌ Помилка в моделі на batch {i}: {e}. Пропуск.")
-                optimizer.zero_grad()
-                continue
-            
-            cls_loss = loss_dict['class_loss'].item()
-            box_loss = loss_dict['box_loss'].item()
-            scaled_cls_loss = cls_loss / max(1.0, cls_loss)
-            scaled_box_loss = box_loss * 50.0
-            loss = loss_dict['loss']
-            
-            if not torch.isfinite(loss):
-                print(f"⚠️ Некоректний loss (cls={cls_loss}, box={box_loss}), пропускаємо.")
-                optimizer.zero_grad()
-                continue
-
-            if self.accumulation_steps > 1:
-                loss = loss / self.accumulation_steps
-
-            loss.backward()
-            
-            grad_norm = 0.0
-            for param in model.parameters():
-                if param.grad is not None:
-                    if torch.isnan(param.grad).any():
-                        print(f"⚠️ NaN у градієнтах на batch {i}, пропускаємо.")
-                        optimizer.zero_grad()
-                        continue
-                    grad_norm += param.grad.norm(2).item() ** 2
-            grad_norm = grad_norm ** 0.5
-            logging.debug(f"Batch {i} grad_norm: {grad_norm}")
-            
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.05)
-            
-            if (i + 1) % self.accumulation_steps == 0 or (i + 1) == len(data_loader):
-                optimizer.step()
-                optimizer.zero_grad()
-                
-                writer.add_scalar('Train/Loss_step', loss.item() * self.accumulation_steps, global_step)
-                writer.add_scalar('Train/Classification_Loss', scaled_cls_loss, global_step)
-                writer.add_scalar('Train/Box_Regression_Loss', scaled_box_loss, global_step)
-                
-                progress_bar.set_postfix(loss=loss.item() * self.accumulation_steps, cls=scaled_cls_loss, box=scaled_box_loss)
-                global_step += 1
-            else:
-                progress_bar.set_postfix(loss=loss.item() * self.accumulation_steps, cls=scaled_cls_loss, box=scaled_box_loss)
-
-        logging.info(f"Пропущено батчів: {skipped_batches}")
-        return global_step
+        return loss_total / loss_count if loss_count > 0 else 0, global_step
 
     def _evaluate_coco(self, model, data_loader, device, val_ann_file):
         """Оцінює модель за допомогою COCO API."""
@@ -328,15 +285,15 @@ class EfficientDetTrainer(BaseTrainer):
         image_ids = []
         
         with torch.no_grad():
-            for images, targets in tqdm(data_loader, desc="COCO Evaluation"):
+            for images, targets, indices in tqdm(data_loader, desc="COCO Evaluation"):
                 images_tensor = torch.stack(images).to(device)
                 detections = pred_model(images_tensor)
                 
-                for idx, (det, target) in enumerate(zip(detections, targets)):
+                for idx, (det, target, index) in enumerate(zip(detections, targets, indices)):
                     image_id = target.get('image_id')
                     if image_id is None:
-                        logging.error(f"Image ID is None for target at index {idx}")
-                        continue
+                        logging.warning(f"Image ID is None for target at index {idx}, using dataset index {index}")
+                        image_id = index
                     if isinstance(image_id, torch.Tensor):
                         image_id = image_id.item()
                     if image_id not in coco_gt.getImgIds():
@@ -349,8 +306,9 @@ class EfficientDetTrainer(BaseTrainer):
                     scores = det[keep, 4].cpu().numpy()
                     labels = det[keep, 5].int().cpu().numpy()
                     
+                    logging.info(f"Model output labels for image {image_id}: {np.unique(labels)}")
+                    
                     for box, score, label in zip(boxes, scores, labels):
-                        # Map model label back to COCO category_id
                         category_id = self.label_to_cat_id.get(label, None)
                         if category_id is None:
                             logging.warning(f"Invalid category_id for label {label}")
@@ -373,6 +331,8 @@ class EfficientDetTrainer(BaseTrainer):
             return {'map': 0.0, 'map_50': 0.0, 'map_75': 0.0}
         
         logging.info(f"Generated {len(coco_dt)} predictions for {len(set(image_ids))} images")
+        logging.info(f"Sample prediction: {coco_dt[:5] if coco_dt else 'No predictions'}")
+        
         try:
             coco_dt = coco_gt.loadRes(coco_dt)
         except Exception as e:
