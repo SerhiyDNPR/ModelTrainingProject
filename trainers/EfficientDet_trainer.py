@@ -286,6 +286,11 @@ class EfficientDetTrainer(BaseTrainer):
             loss_dict = model(images, batched_target)
             # --- КІНЕЦЬ ВИПРАВЛЕННЯ ---
 
+            # --- ДОДАНО СТАТИСТИКУ (з попередньої версії) ---
+            cls_loss = loss_dict['class_loss'].item()
+            box_loss = loss_dict['box_loss'].item()
+            # --- КІНЕЦЬ ДОДАВАННЯ ---
+
             losses = sum(loss for loss in loss_dict.values())
             loss_value = losses.item()
 
@@ -305,10 +310,15 @@ class EfficientDetTrainer(BaseTrainer):
 
             loss_total += loss_value
             loss_count += 1
-            progress_bar.set_postfix(loss=loss_value, avg_loss=loss_total/loss_count, lr=optimizer.param_groups[0]['lr'])
+            # --- ОНОВЛЕНО POSTFIX (з попередньої версії) ---
+            progress_bar.set_postfix(loss=loss_value, cls=cls_loss, box=box_loss, avg_loss=loss_total/loss_count, lr=optimizer.param_groups[0]['lr'])
 
             if writer:
                 writer.add_scalar('Loss/train', loss_value, global_step)
+                # --- ДОДАНО СТАТИСТИКУ (з попередньої версії) ---
+                writer.add_scalar('Train/Classification_Loss', cls_loss, global_step)
+                writer.add_scalar('Train/Box_Regression_Loss', box_loss, global_step)
+                # --- КІНЕЦЬ ДОДАВАННЯ ---
                 writer.add_scalar('LR', optimizer.param_groups[0]['lr'], global_step)
 
         return loss_total / loss_count if loss_count > 0 else 0, global_step
@@ -347,12 +357,16 @@ class EfficientDetTrainer(BaseTrainer):
                     
                     logging.info(f"Model output labels for image {image_id}: {np.unique(labels)}")
                     
-                    for box, score, label in zip(boxes, scores, labels):
-                        category_id = self.label_to_cat_id.get(label, None)
+                    for box, score, label_1_indexed in zip(boxes, scores, labels):
+                        # Модель повертає 1-індексні мітки, але наш мапінг 0-індексний
+                        label_0_indexed = label_1_indexed - 1
+                        category_id = self.label_to_cat_id.get(label_0_indexed, None)
+                        
                         if category_id is None:
-                            logging.warning(f"Invalid category_id for label {label}")
+                            logging.warning(f"Invalid category_id for 1-indexed label {label_1_indexed} (mapped to {label_0_indexed})")
                             continue
                         x_min, y_min, x_max, y_max = box
+
                         width = x_max - x_min
                         height = y_max - y_min
                         if width <= 0 or height <= 0:
@@ -413,7 +427,7 @@ class EfficientDetTrainer(BaseTrainer):
                     preds.append({
                         'boxes': det[keep, :4],
                         'scores': det[keep, 4],
-                        'labels': det[keep, 5].int()
+                        'labels': det[keep, 5].int() - 1
                     })
                 
                 targets_for_metric = [{k: v.to(device) for k, v in t.items() if k != 'image_id'} for t in targets]
@@ -503,7 +517,7 @@ class EfficientDetTrainer(BaseTrainer):
         for epoch in range(start_epoch, self.params['epochs']):
             logging.info(f"Починаємо епоху {epoch + 1}/{self.params['epochs']}")
             
-            global_step = self._train_one_epoch(
+            avg_train_loss, global_step = self._train_one_epoch(
                 model, optimizer, train_loader, self.params['device'], epoch, writer,
                 global_step, target_lr, warmup_steps, warmup_start_lr
             )
