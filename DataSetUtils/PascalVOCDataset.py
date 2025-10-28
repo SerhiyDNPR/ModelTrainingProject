@@ -63,6 +63,10 @@ class PascalVOCDataset(torch.utils.data.Dataset):
     def __len__(self):
         # Довжина тепер дорівнює розміру кешу
         return len(self.data_cache)
+    
+    def __iter__(self):
+            for i in range(len(self)):
+                yield self[i]
 
     def __getitem__(self, idx):
         # start_time = time.time() # Для діагностики
