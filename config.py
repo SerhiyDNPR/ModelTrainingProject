@@ -11,13 +11,13 @@ FINAL_DATASET_DIR = "YoloDataset"
 FRAMEWORKS = {
     1: "YOLO",
     2: "ResNet (clasification only - dead end)",
-    3: "Faster R-CNN (ResNet50/ResNet101/MobileNet)", 
+    3: "Faster R-CNN (ResNet50/ResNet101/MobileNet/Swin-T/Swin-S)",
     4: "DETR",
     5: "Deformable DETR",    
     6: "FCOS",
     7: "RT-DETR (Ultralytics)",
     8: "Mask R-CNN",
-    9: "RetinaNet",
+    9: "RetinaNet (ResNet50/EfficientNet/Swin-T/Swin-S)",
     10: "Cascade R-CNN",
     11: "SSD",
     12: "EfficientDet"

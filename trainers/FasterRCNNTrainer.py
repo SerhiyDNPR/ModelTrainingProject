@@ -14,6 +14,7 @@ from trainers.trainers import BaseTrainer, collate_fn, log_dataset_statistics_to
 from torchmetrics.detection import MeanAveragePrecision
 from torch.utils.tensorboard import SummaryWriter
 from torchvision.models.detection.backbone_utils import resnet_fpn_backbone
+from utils.backbone_factory import create_fpn_backbone
 
 # --- Універсальний тренер для Faster R-CNN з вибором backbone ---
 class FasterRCNNTrainer(BaseTrainer):
@@ -48,9 +49,13 @@ class FasterRCNNTrainer(BaseTrainer):
         print("  1: ResNet-50 (збалансований варіант)")
         print("  2: ResNet-101 (повільніший, потенційно точніший)")
         print("  3: MobileNetV3-Large (дуже швидкий, для мобільних пристроїв)")
+        # --- НОВІ SWIN ТРАНСФОРМЕРИ ---
+        print("  4: Swin-T (Tiny - Трансформер, швидкий)")
+        print("  5: Swin-S (Small - Трансформер, збалансований)")
+        # -----------------------------
         
         while True:
-            choice = input("Ваш вибір (1, 2 або 3): ").strip()
+            choice = input("Ваш вибір (1, 2, 3, 4 або 5): ").strip() # !!! Змінено опції
             backbone_base = None
             if choice == '1':
                 print("✅ Ви обрали ResNet-50.")
@@ -61,11 +66,27 @@ class FasterRCNNTrainer(BaseTrainer):
             elif choice == '3':
                 print("✅ Ви обрали MobileNetV3-Large.")
                 backbone_base = 'mobilenet'
+            elif choice == '4':
+                print("✅ Ви обрали Swin-T.")
+                backbone_base = 'swin_t'
+                # Перевірка наявності timm для трансформерів
+                try:
+                    import timm
+                except ImportError:
+                    print("❌ Помилка: бібліотека 'timm' не встановлена. Оберіть інший backbone.")
+                    continue
+            elif choice == '5':
+                print("✅ Ви обрали Swin-S.")
+                backbone_base = 'swin_s'
+                try:
+                    import timm
+                except ImportError:
+                    print("❌ Помилка: бібліотека 'timm' не встановлена. Оберіть інший backbone.")
+                    continue
             else:
-                print("❌ Невірний вибір. Будь ласка, введіть 1, 2 або 3.")
+                print("❌ Невірний вибір. Будь ласка, введіть 1, 2, 3, 4 або 5.")
                 continue
 
-            # Після вибору backbone, запитуємо режим навчання
             training_mode_suffix = self._ask_training_mode()
             return f"{backbone_base}{training_mode_suffix}"
 
@@ -78,7 +99,8 @@ class FasterRCNNTrainer(BaseTrainer):
         base_name_map = {
             'resnet50': 'ResNet50',
             'resnet101': 'ResNet101',
-            'mobilenet': 'MobileNet'
+            'mobilenet': 'MobileNet',
+            'swin': 'Swin', # Буде Swin-T або Swin-S
         }
         mode_name_map = {
             'finetune': 'Fine-tune',
@@ -86,7 +108,12 @@ class FasterRCNNTrainer(BaseTrainer):
         }
         
         base_name = base_name_map.get(parts[0], 'Unknown')
-        mode_name = mode_name_map.get(parts[1], 'Training')
+        
+        # Обробка Swin-T та Swin-S
+        if parts[0] == 'swin':
+            base_name = 'Swin-' + parts[1].upper() # Swin-T або Swin-S
+
+        mode_name = mode_name_map.get(parts[-1], 'Training') # -1 для 'finetune'/'full'
         
         return f"Faster R-CNN ({base_name} {mode_name})"
 
@@ -94,14 +121,14 @@ class FasterRCNNTrainer(BaseTrainer):
         """Завантажує модель Faster R-CNN з обраним backbone та режимом навчання."""
         print(f"🔧 Створення моделі: {self._get_model_name()}")
         
-        # Визначаємо, чи потрібно заморожувати ваги
         is_finetune = self.backbone_type.endswith('_finetune')
+        model = None
         
-        # Створюємо модель
         if self.backbone_type.startswith('resnet50'):
             model = models.detection.fasterrcnn_resnet50_fpn(weights=models.detection.FasterRCNN_ResNet50_FPN_Weights.DEFAULT)
         
         elif self.backbone_type.startswith('resnet101'):
+            # Спеціальна обробка ResNet101
             try:
                 from torchvision.models import ResNet101_Weights
                 backbone = resnet_fpn_backbone('resnet101', weights=ResNet101_Weights.IMAGENET1K_V1)
@@ -109,26 +136,47 @@ class FasterRCNNTrainer(BaseTrainer):
                 print("⚠️ Попередження: не вдалося завантажити ваги за новим API. Використовується 'pretrained=True'.")
                 backbone = resnet_fpn_backbone('resnet101', pretrained=True)
             model = models.detection.FasterRCNN(backbone, num_classes=num_classes)
-            # Для ResNet101 голова вже замінена, тому виходимо раніше
+            # Для ResNet101 голова вже замінена, і ми виходимо раніше
             return model
         
         elif self.backbone_type.startswith('mobilenet'):
             model = models.detection.fasterrcnn_mobilenet_v3_large_fpn(
                 weights=models.detection.FasterRCNN_MobileNet_V3_Large_FPN_Weights.DEFAULT
             )
+
+        # --- ЛОГІКА ДЛЯ SWIN ---
+        elif self.backbone_type.startswith('swin'):
+            # Визначаємо назву Swin моделі для timm
+            swin_map = {
+                'swin_t': 'swin_tiny_patch4_window7_224',
+                'swin_s': 'swin_small_patch4_window7_224'
+            }
+            backbone_key = swin_map.get(self.backbone_type.split('_')[0] + '_' + self.backbone_type.split('_')[1], None)
+
+            if backbone_key:
+                print(f"🔧 Створення Swin FPN backbone: {backbone_key}")
+                # Створюємо FPN з використанням Swin Transformer як бекбону
+                backbone = create_fpn_backbone(backbone_key, pretrained=True)
+                model = models.detection.FasterRCNN(backbone, num_classes=num_classes)
+            else:
+                print(f"❌ Помилка: невідомий тип Swin backbone.")
+                sys.exit(1)
+        # -----------------------
+        
         else:
             print(f"❌ Помилка: невідомий тип backbone '{self.backbone_type}'.")
             sys.exit(1)
         
-        # Умовне "заморожування" ваг для ResNet50 та MobileNet
+        # --- Заморожування ваг (загальна логіка) ---
         if is_finetune:
             print("❄️ Заморожування ваг backbone. Навчання тільки 'голови' (fine-tuning).")
-            for param in model.parameters():
+            # Заморожуємо параметри backbone, які є частиною моделі
+            for param in model.backbone.parameters():
                 param.requires_grad = False
         else:
             print("🔥 Усі ваги моделі розморожено для повного навчання (full training).")
             
-        # Замінюємо голову для ResNet50 та MobileNet
+        # Замінюємо голову (FastRCNNPredictor)
         in_features = model.roi_heads.box_predictor.cls_score.in_features
         model.roi_heads.box_predictor = models.detection.faster_rcnn.FastRCNNPredictor(in_features, num_classes)
                 

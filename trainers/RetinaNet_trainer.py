@@ -33,6 +33,8 @@ BACKBONE_CONFIGS = {
     '7': ('tf_efficientnet_b5', (1280, 1280), "EfficientDet-D5 (вища точність, повільніший)"),
     '8': ('tf_efficientnet_b6', (1536, 1536), "EfficientDet-D6"),
     '9': ('tf_efficientnet_b7', (1536, 1536), "EfficientDet-D7 (найвища точність)"),
+    '10': ('swin_tiny_patch4_window7_224', (800, 800), "Swin-T (Tiny - Трансформер, швидкий)"),
+    '11': ('swin_small_patch4_window7_224', (1024, 1024), "Swin-S (Small - Трансформер, збалансований)"),
 }
 
 # --- Тренер для RetinaNet ---
@@ -46,25 +48,27 @@ class RetinaNetTrainer(BaseTrainer):
         self.image_size = None
 
     def _select_configuration(self):
-        """Запитує у користувача backbone та режим навчання для RetinaNet."""
         print("\n   Оберіть 'хребет' (backbone) для RetinaNet:")
         for key, (_, _, description) in BACKBONE_CONFIGS.items():
             print(f"     {key}: {description}")
         
         while self.backbone_type is None:
-            choice = input(f"   Ваш вибір backbone (1-{len(BACKBONE_CONFIGS)}): ").strip()
+            choice = input(f"   Ваш вибір backbone (1-{len(BACKBONE_CONFIGS)}): ").strip() # !!! Змінено межу
             if choice in BACKBONE_CONFIGS:
                 self.backbone_type, self.image_size, desc = BACKBONE_CONFIGS[choice]
                 print(f"✅ Обрано backbone: {desc.split(' (')[0]} з розміром зображення {self.image_size}")
-                if 'efficientnet' in self.backbone_type:
+                
+                # --- УЗАГАЛЬНЕНА ПЕРЕВІРКА TIMM ---
+                if 'efficientnet' in self.backbone_type or 'swin' in self.backbone_type:
                     try:
                         import timm
                     except ImportError:
                         print("❌ Помилка: бібліотека 'timm' не встановлена. Оберіть інший backbone.")
                         self.backbone_type = None
                         continue
+                # -----------------------------------
             else:
-                 print(f"   ❌ Невірний вибір. Будь ласка, введіть число від 1 до {len(BACKBONE_CONFIGS)}.")
+                print(f"   ❌ Невірний вибір. Будь ласка, введіть число від 1 до {len(BACKBONE_CONFIGS)}.")
 
         print("\n   Оберіть режим навчання:")
         print("     1: Fine-tuning (навчати тільки 'голову', швидше, рекомендовано)")
@@ -87,6 +91,8 @@ class RetinaNetTrainer(BaseTrainer):
         backbone_str = "ResNet-50"
         if 'efficientnet' in self.backbone_type:
             backbone_str = self.backbone_type.upper().replace('TF_', '').replace('_', '-')
+        elif 'swin' in self.backbone_type:
+            backbone_str = self.backbone_type.upper().split('_')[0] + '-T' # Наприклад, SWIN-T
         
         mode_name = "Fine-tune" if self.training_mode == '_finetune' else "Full"
         return f"RetinaNet ({backbone_str} {mode_name})"
@@ -95,18 +101,26 @@ class RetinaNetTrainer(BaseTrainer):
         """Завантажує модель RetinaNet, адаптує її голову та заморожує ваги, якщо потрібно."""
         print(f"🔧 Створення моделі: {self._get_model_name()}")
 
-        if 'efficientdet' in self.backbone_type:
+        # --- ЛОГІКА ДЛЯ EFFICIENTNET ТА SWIN (BACKBONES З TIMM) ---
+        if 'efficientnet' in self.backbone_type or 'swin' in self.backbone_type:
             print(f"🔧 Створення моделі: {self._get_model_name()}")
 
+            # create_fpn_backbone має обробляти як efficientnet, так і swin
             backbone = create_fpn_backbone(self.backbone_type, pretrained=True)
-            # -----------------------------------------------
-
-            anchor_generator = AnchorGenerator.from_config(
-                config={
-                    "sizes": tuple((x, int(x * 2 ** (1.0 / 3)), int(x * 2 ** (2.0 / 3))) for x in [32, 64, 128, 256, 512]),
-                    "aspect_ratios": tuple([(0.5, 1.0, 2.0)] * 5),
-                }
+            
+            # --- СТВОРЕННЯ HEAD ТА МОДЕЛІ ---
+            # Визначаємо параметри якірних боксів
+            anchor_sizes = tuple(
+                (x, int(x * 2 ** (1.0 / 3)), int(x * 2 ** (2.0 / 3))) for x in [32, 64, 128, 256, 512]
             )
+            anchor_aspect_ratios = tuple([(0.5, 1.0, 2.0)] * len(anchor_sizes))
+
+            # Створюємо AnchorGenerator безпосередньо (виправлення AttributeError)
+            anchor_generator = AnchorGenerator(
+                sizes=anchor_sizes,
+                aspect_ratios=anchor_aspect_ratios
+            )
+            # Примітка: backbone.out_channels має повертати FPN канали (256 або 512)
             head = RetinaNetHead(
                 backbone.out_channels, 
                 anchor_generator.num_anchors_per_location()[0], 
@@ -114,26 +128,17 @@ class RetinaNetTrainer(BaseTrainer):
             )
             model = models.detection.RetinaNet(backbone, num_classes=num_classes, anchor_generator=anchor_generator, head=head)
 
-            if self.training_mode == '_finetune':
-                print("❄️ Заморожування ваг backbone. Навчання тільки 'голови'.")
-                for param in model.backbone.parameters():
-                    param.requires_grad = False
-            else:
-                print("🔥 Усі ваги моделі розморожено для повного навчання.")
-                for param in model.parameters():
-                    param.requires_grad = True
-            
-            return model
-        else: # 'resnet50'
+        else: # 'resnet50' (використовує torchvision вбудований)
             model = models.detection.retinanet_resnet50_fpn_v2(weights=models.detection.RetinaNet_ResNet50_FPN_V2_Weights.DEFAULT)
             num_anchors = model.head.classification_head.num_anchors
             in_channels = model.backbone.out_channels
             new_head = RetinaNetHead(in_channels, num_anchors, num_classes)
             model.head = new_head
 
-        # --- Заморожування ваг ---
+        # --- ЗАМОРОЖУВАННЯ ВАГ (Спільна логіка) ---
         if self.training_mode == '_finetune':
             print("❄️ Заморожування ваг backbone. Навчання тільки 'голови'.")
+            # Заморожуємо параметри backbone, які є частиною моделі
             for param in model.backbone.parameters():
                 param.requires_grad = False
         else:
@@ -141,7 +146,7 @@ class RetinaNetTrainer(BaseTrainer):
             for param in model.parameters():
                 param.requires_grad = True
         
-        return model 
+        return model
 
     # Решта коду файлу залишається без змін...
     def start_or_resume_training(self, dataset_stats):

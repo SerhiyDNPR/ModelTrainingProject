@@ -138,7 +138,7 @@ class TrainingManager:
                 training_params=self.config.MASK_RCNN_TRAIN_PARAMS,
                 dataset_dir=output_folder
             )
-        elif self.framework_name == "RetinaNet":
+        elif self.framework_name.startswith("RetinaNet"):
             # RetinaNet, як і FCOS, добре працює з COCO
             output_folder = "COCODataSet_RetinaNet"
             self.converter = COCODataConverter(
