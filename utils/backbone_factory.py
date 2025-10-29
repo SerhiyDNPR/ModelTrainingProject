@@ -11,7 +11,7 @@ try:
 except ImportError:
     timm = None
 
-# --- Функція для створення сумісного субкласу ---
+# --- Функція для створення сумісного субкласу (залишається) ---
 def create_compatible_timm_backbone(timm_model: nn.Module, out_names: list[str]) -> nn.Module:
     """
     Створює спеціалізований субклас nn.Module, який інкапсулює модель timm, 
@@ -48,6 +48,7 @@ class CustomFPN(nn.Module):
         self.timm_model = timm_model
         
         self.out_channels = out_channels 
+        self.in_channels_list = in_channels_list # Зберігаємо для коректної перевірки
         
         # Бічні та верхні (латеральні та доповнюючі) шари
         self.inner_blocks = nn.ModuleList()
@@ -55,7 +56,6 @@ class CustomFPN(nn.Module):
         self.last_level = LastLevelP6P7(out_channels, out_channels)
 
         for in_channels in in_channels_list:
-            # Тут in_channels має бути 768 для Swin C5
             self.inner_blocks.append(nn.Conv2d(in_channels, out_channels, 1))
             self.layer_blocks.append(nn.Conv2d(out_channels, out_channels, 3, padding=1))
 
@@ -74,16 +74,19 @@ class CustomFPN(nn.Module):
         timm_features = self.timm_model(x) 
         
         # --- КРИТИЧНЕ ВИПРАВЛЕННЯ: Транспонування (NHWC -> NCHW) ---
-        # Виходи Swin/ViT часто мають розмірність (N, H, W, C). Conv2d очікує (N, C, H, W).
-        def safe_permute(f):
-            # Якщо тензор має 4 розмірності і кількість каналів (f.shape[-1])
-            # відповідає очікуваній кількості каналів FPN (self.inner_blocks[-1].in_channels), 
-            # транспортуємо його.
-            if f.dim() == 4 and f.shape[-1] == self.inner_blocks[-1].in_channels:
-                 return f.permute(0, 3, 1, 2) # N, H, W, C -> N, C, H, W
-            return f
-
-        timm_features = [safe_permute(f) for f in timm_features]
+        # Перевіряємо, чи потрібно транспортувати кожен елемент, порівнюючи 
+        # його shape[-1] (кількість каналів) з очікуваним in_channels_list[i].
+        
+        corrected_features = []
+        for feature, expected_channels in zip(timm_features, self.in_channels_list):
+            # Якщо тензор має 4 розмірності І останній вимір відповідає очікуваним каналам,
+            # це означає, що він у форматі NHWC і має бути транспонований.
+            if feature.dim() == 4 and feature.shape[-1] == expected_channels:
+                 corrected_features.append(feature.permute(0, 3, 1, 2)) # N, H, W, C -> N, C, H, W
+            else:
+                 corrected_features.append(feature)
+        
+        timm_features = corrected_features
         # ----------------------------------------------------------------------
         
         last_inner = self.inner_blocks[-1](timm_features[-1])
@@ -170,7 +173,6 @@ def create_fpn_backbone(backbone_type: str, pretrained: bool = True):
     elif backbone_type == 'resnet50':
         weights = models.ResNet50_Weights.DEFAULT if pretrained else None
         
-        # ResNet використовує стандартний BackboneWithFPN, який коректно імпортовано
         backbone = resnet_fpn_backbone(
             'resnet50',
             weights=weights,
