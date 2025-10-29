@@ -156,7 +156,7 @@ class FasterRCNNTrainer(BaseTrainer):
             if backbone_key:
                 print(f"🔧 Створення Swin FPN backbone: {backbone_key}")
                 # Створюємо FPN з використанням Swin Transformer як бекбону
-                backbone = create_fpn_backbone(backbone_key, pretrained=True)
+                backbone = create_fpn_backbone(self.backbone_type, pretrained=True, input_img_size = self.image_size[0])
                 model = models.detection.FasterRCNN(backbone, num_classes=num_classes)
             else:
                 print(f"❌ Помилка: невідомий тип Swin backbone.")

@@ -106,7 +106,7 @@ class RetinaNetTrainer(BaseTrainer):
             print(f"🔧 Створення моделі: {self._get_model_name()}")
 
             # create_fpn_backbone має обробляти як efficientnet, так і swin
-            backbone = create_fpn_backbone(self.backbone_type, pretrained=True)
+            backbone = create_fpn_backbone(self.backbone_type, pretrained=True, input_img_size = self.image_size[0])
             
             # --- СТВОРЕННЯ HEAD ТА МОДЕЛІ ---
             # Визначаємо параметри якірних боксів
