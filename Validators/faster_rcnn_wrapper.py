@@ -9,18 +9,23 @@ from torchvision.models.detection.backbone_utils import resnet_fpn_backbone
 from Validators.model_wrapper import ModelWrapper
 from Validators.prediction import Prediction
 from utils.backbone_factory import create_fpn_backbone 
-import cv2 # ДОДАНО
+import cv2 
 
 BACKBONE_CHOICES = {
     '1': ('resnet50', (800, 800), "ResNet-50"),
     '2': ('resnet101', (800, 800), "ResNet-101"),
     '3': ('mobilenet', (640, 640), "MobileNetV3-Large"),
     '4': ('swin_tiny_patch4_window7_224', (800, 800), "Swin-T (Tiny Transformer)"),
-    '5': ('swin_small_patch4_window7_224', (800, 800), "Swin-S (Small Transformer)"),
+    '5': ('swin_small_patch4_window7_224', (1024, 1024), "Swin-S (Small Transformer)"),
 }
 
 class FasterRCNNWrapper(ModelWrapper):
     """Універсальна обгортка для моделей Faster R-CNN з можливістю вибору backbone."""
+
+    def __init__(self, class_names, device):
+        super().__init__(class_names, device)
+        self.input_size = (0, 0)
+        self.backbone_type = None
 
     def _select_backbone(self):
         """
@@ -34,35 +39,47 @@ class FasterRCNNWrapper(ModelWrapper):
             choice = input(f"Ваш вибір (1-{len(BACKBONE_CHOICES)}): ").strip()
             if choice in BACKBONE_CHOICES:
                 backbone_type, recommended_size, desc = BACKBONE_CHOICES[choice]
+                self.backbone_type = backbone_type # Зберігаємо для predict
                 print(f"✅ Обрано архітектуру на базі: {desc.split(' (')[0]}")
                 
-                if backbone_type.startswith('swin'):
+                if 'resnet' not in backbone_type and 'mobilenet' not in backbone_type:
                     try:
                         import timm
                     except ImportError:
                         print("❌ Помилка: бібліотека 'timm' не встановлена. Оберіть інший backbone.")
                         continue
 
-                # Додаткове питання про розмір
-                print(f"⚠️ Увага: Рекомендований розмір для цієї моделі: {recommended_size[0]}x{recommended_size[1]}.")
-                custom_size_input = input("Введіть розмір зображення (одна сторона, наприклад, 800), на якому навчалася модель, або натисніть Enter, щоб використати рекомендований: ").strip()
-                
-                try:
-                    input_size = int(custom_size_input) if custom_size_input else recommended_size[0]
-                except ValueError:
-                    print("❌ Невірний формат розміру. Використовується рекомендований розмір.")
-                    input_size = recommended_size[0]
+                    # --- Запит розміру ТІЛЬКИ ДЛЯ SWIN ---
+                    if 'swin' in backbone_type:
+                        print(f"⚠️ Увага: Рекомендований розмір для цієї моделі: {recommended_size[0]}x{recommended_size[1]}.")
+                        custom_size_input = input("Введіть розмір зображення (одна сторона, наприклад, 800), на якому навчалася модель, або натисніть Enter, щоб використати рекомендований: ").strip()
+                        
+                        try:
+                            input_size = int(custom_size_input) if custom_size_input else recommended_size[0]
+                        except ValueError:
+                            print("❌ Невірний формат розміру. Використовується рекомендований розмір.")
+                            input_size = recommended_size[0]
 
-                return backbone_type, (input_size, input_size)
+                        return backbone_type, (input_size, input_size)
+                    
+                    else:
+                        # Тут може бути логіка для EfficientNet, якщо його додати
+                        return backbone_type, recommended_size
+                
+                else:
+                    # Для ResNet/MobileNet повертаємо рекомендований розмір без запиту
+                    return backbone_type, recommended_size
             else:
                 print(f"❌ Невірний вибір. Будь ласка, введіть число від 1 до {len(BACKBONE_CHOICES)}.")
 
     def load(self, model_path):
         try:
-            # Отримуємо backbone_type та image_size
             backbone_type, image_size = self._select_backbone()
             num_classes_with_bg = len(self.class_names) + 1
             model = None
+            
+            # Визначаємо, чи потрібен input_img_size (для Swin)
+            input_size_param = image_size if 'swin' in backbone_type else None
             
             # --- ResNet & MobileNet (using torchvision built-in) ---
             if backbone_type == 'resnet50':
@@ -81,7 +98,7 @@ class FasterRCNNWrapper(ModelWrapper):
             # --- Swin (using custom FPN from backbone_factory) ---
             elif backbone_type.startswith('swin'):
                 # Swin ВИМАГАЄ input_img_size
-                backbone = create_fpn_backbone(backbone_type, pretrained=False, input_img_size=image_size)
+                backbone = create_fpn_backbone(backbone_type, pretrained=False, input_img_size=input_size_param)
                 model = FasterRCNN(backbone, num_classes=91) 
             
             else:
@@ -108,31 +125,55 @@ class FasterRCNNWrapper(ModelWrapper):
             raise
 
     def predict(self, frame, conf_threshold):
+        """Робить передбачення на одному кадрі з урахуванням умовного масштабування."""
         predictions = []
+        
+        # 1. Зберігаємо оригінальні розміри
+        H_orig, W_orig, _ = frame.shape
         rgb_frame = frame[:, :, ::-1].copy()
         
-        # --- ВИПРАВЛЕННЯ: Масштабування кадру до розміру, на якому тренувалась модель ---
-        W, H = self.input_size 
+        # 2. Визначаємо, чи потрібне явне масштабування для входу. 
+        is_swin_backbone = self.backbone_type and 'swin' in self.backbone_type
         
-        if frame.shape[0] != H or frame.shape[1] != W:
-             resized_frame = cv2.resize(rgb_frame, (W, H), interpolation=cv2.INTER_LINEAR)
-        else:
-             resized_frame = rgb_frame
-             
-        tensor_frame = F.to_tensor(resized_frame).to(self.device)
-        # ---------------------------------------------------------------------------------
-
+        frame_to_process = rgb_frame
+        should_rescale_boxes = False
+        
+        W_target, H_target = self.input_size if self.input_size else (0, 0)
+        
+        # 3. УМОВНЕ МАШТАБУВАННЯ
+        if is_swin_backbone:
+            # Масштабування виконується ЛИШЕ для Swin
+            if H_orig != H_target or W_orig != W_target:
+                 frame_to_process = cv2.resize(rgb_frame, (W_target, H_target), interpolation=cv2.INTER_LINEAR)
+                 should_rescale_boxes = True
+        
+        tensor_frame = F.to_tensor(frame_to_process).to(self.device)
+        
         with torch.no_grad():
             results = self.model([tensor_frame])[0]
 
-        for box, label, score in zip(results["boxes"], results["labels"], results["scores"]):
+        # 4. ЗВОРОТНЕ МАШТАБУВАННЯ КООРДИНАТ
+        boxes = results["boxes"].cpu().numpy()
+        
+        if should_rescale_boxes:
+            # Коефіцієнти масштабування: (Оригінальний розмір / Цільовий розмір)
+            scale_x = W_orig / W_target
+            scale_y = H_orig / H_target
+            
+            # Масштабуємо координати: xmin, ymin, xmax, ymax
+            boxes[:, [0, 2]] *= scale_x 
+            boxes[:, [1, 3]] *= scale_y 
+            
+        # 5. Формування результатів
+        for box, label, score in zip(boxes, results["labels"].cpu(), results["scores"].cpu()):
             if score.item() >= conf_threshold:
-                class_id = label.item() - 1
+                # Faster R-CNN/Mask R-CNN використовує 1-base індексацію (0 - фон)
+                class_id = label.item() - 1 
                 if 0 <= class_id < len(self.class_names):
                     class_name = self.class_names[class_id]
                     predictions.append(
                         Prediction(
-                            box.cpu().numpy(),
+                            box,
                             score.item(),
                             class_id,
                             class_name
