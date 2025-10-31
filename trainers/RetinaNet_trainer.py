@@ -25,16 +25,8 @@ from utils.backbone_factory import create_fpn_backbone
 # Словник з конфігураціями backbone: назва, рекомендований розмір (ширина, висота) та опис
 BACKBONE_CONFIGS = {
     '1': ('resnet50', (800, 800), "ResNet-50 (стандартний, збалансований)"),
-    '2': ('tf_efficientnet_b0', (512, 512), "EfficientDet-D0 (найлегший)"),
-    '3': ('tf_efficientnet_b1', (640, 640), "EfficientDet-D1 (кращий баланс швидкість/точність)"),
-    '4': ('tf_efficientnet_b2', (768, 768), "EfficientDet-D2"),
-    '5': ('tf_efficientnet_b3', (896, 896), "EfficientDet-D3"),
-    '6': ('tf_efficientnet_b4', (1024, 1024), "EfficientDet-D4"),
-    '7': ('tf_efficientnet_b5', (1280, 1280), "EfficientDet-D5 (вища точність, повільніший)"),
-    '8': ('tf_efficientnet_b6', (1536, 1536), "EfficientDet-D6"),
-    '9': ('tf_efficientnet_b7', (1536, 1536), "EfficientDet-D7 (найвища точність)"),
-    '10': ('swin_tiny_patch4_window7_224', (800, 800), "Swin-T (Tiny - Трансформер, швидкий)"),
-    '11': ('swin_small_patch4_window7_224', (1024, 1024), "Swin-S (Small - Трансформер, збалансований)"),
+    '2': ('swin_tiny_patch4_window7_224', (800, 800), "Swin-T (Tiny - Трансформер, швидкий)"),
+    '3': ('swin_small_patch4_window7_224', (1024, 1024), "Swin-S (Small - Трансформер, збалансований)"),
 }
 
 # --- Тренер для RetinaNet ---
@@ -59,7 +51,7 @@ class RetinaNetTrainer(BaseTrainer):
                 print(f"✅ Обрано backbone: {desc.split(' (')[0]} з розміром зображення {self.image_size}")
                 
                 # --- УЗАГАЛЬНЕНА ПЕРЕВІРКА TIMM ---
-                if 'efficientnet' in self.backbone_type or 'swin' in self.backbone_type:
+                if 'swin' in self.backbone_type:
                     try:
                         import timm
                     except ImportError:
@@ -89,9 +81,7 @@ class RetinaNetTrainer(BaseTrainer):
             return "RetinaNet"
             
         backbone_str = "ResNet-50"
-        if 'efficientnet' in self.backbone_type:
-            backbone_str = self.backbone_type.upper().replace('TF_', '').replace('_', '-')
-        elif 'swin' in self.backbone_type:
+        if 'swin' in self.backbone_type:
             backbone_str = self.backbone_type.upper().split('_')[0] + '-T' # Наприклад, SWIN-T
         
         mode_name = "Fine-tune" if self.training_mode == '_finetune' else "Full"
@@ -101,32 +91,34 @@ class RetinaNetTrainer(BaseTrainer):
         """Завантажує модель RetinaNet, адаптує її голову та заморожує ваги, якщо потрібно."""
         print(f"🔧 Створення моделі: {self._get_model_name()}")
 
-        # --- ЛОГІКА ДЛЯ EFFICIENTNET ТА SWIN (BACKBONES З TIMM) ---
-        if 'efficientnet' in self.backbone_type or 'swin' in self.backbone_type:
+        # --- ЛОГІКА ДЛЯ SWIN (BACKBONES З TIMM) ---
+        if 'swin' in self.backbone_type:
             print(f"🔧 Створення моделі: {self._get_model_name()}")
 
-            # create_fpn_backbone має обробляти як efficientnet, так і swin
+            # create_fpn_backbone має обробляти swin
             backbone = create_fpn_backbone(self.backbone_type, pretrained=True, input_img_size = self.image_size[0])
             
             # --- СТВОРЕННЯ HEAD ТА МОДЕЛІ ---
+            
+            # ВИПРАВЛЕННЯ: Адаптація AnchorGenerator до кількості FPN рівнів (5 для Swin)
+            anchor_level_sizes = [32, 64, 128, 256, 512]
+            
             # Визначаємо параметри якірних боксів
             anchor_sizes = tuple(
-                (x, int(x * 2 ** (1.0 / 3)), int(x * 2 ** (2.0 / 3))) for x in [32, 64, 128, 256, 512]
+                (x, int(x * 2 ** (1.0 / 3)), int(x * 2 ** (2.0 / 3))) for x in anchor_level_sizes
             )
-            anchor_aspect_ratios = tuple([(0.5, 1.0, 2.0)] * len(anchor_sizes))
+            anchor_aspect_ratios = tuple([(0.5, 1.0, 2.0)] * len(anchor_level_sizes))
 
-            # Створюємо AnchorGenerator безпосередньо (виправлення AttributeError)
+            # Створюємо AnchorGenerator
             anchor_generator = AnchorGenerator(
                 sizes=anchor_sizes,
                 aspect_ratios=anchor_aspect_ratios
             )
-            # Примітка: backbone.out_channels має повертати FPN канали (256 або 512)
-            head = RetinaNetHead(
-                backbone.out_channels, 
-                anchor_generator.num_anchors_per_location()[0], 
-                num_classes
-            )
-            model = models.detection.RetinaNet(backbone, num_classes=num_classes, anchor_generator=anchor_generator, head=head)
+            
+            in_channels = backbone.out_channels
+            num_anchors = anchor_generator.num_anchors_per_location()[0]
+            
+            model = models.detection.RetinaNet(backbone, num_classes=num_classes, anchor_generator=anchor_generator)
 
         else: # 'resnet50' (використовує torchvision вбудований)
             model = models.detection.retinanet_resnet50_fpn_v2(weights=models.detection.RetinaNet_ResNet50_FPN_V2_Weights.DEFAULT)
@@ -192,10 +184,15 @@ class RetinaNetTrainer(BaseTrainer):
         log_dataset_statistics_to_tensorboard(train_loader.dataset, writer)
 
         if checkpoint_path:
-            model, optimizer, start_epoch, best_map, lr_scheduler = self._load_checkpoint(
-                checkpoint_path, model, optimizer, device, lr_scheduler
-            )
-            print(f"🚀 Відновлення навчання з {start_epoch}-ї епохи.")
+            # Обробка несумісності чекпоінту
+            try:
+                model, optimizer, start_epoch, best_map, lr_scheduler = self._load_checkpoint(
+                    checkpoint_path, model, optimizer, device, lr_scheduler
+                )
+                print(f"🚀 Відновлення навчання з {start_epoch}-ї епохи.")
+            except RuntimeError as e:
+                print(f"❌ Помилка завантаження чекпоінту: {e}. Навчання розпочнеться з нуля.")
+                start_epoch, best_map, global_step = 0, 0.0, 0
         
         print(f"\n🚀 Розпочинаємо тренування на {epochs} епох...")
         for epoch in range(start_epoch, epochs):
@@ -212,7 +209,7 @@ class RetinaNetTrainer(BaseTrainer):
             if is_best:
                 best_map = val_map
 
-            self.save_checkpoint({
+            self._save_checkpoint({
                 'epoch': epoch + 1, 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(), 'best_map': best_map,
                 'lr_scheduler_state_dict': lr_scheduler.state_dict()

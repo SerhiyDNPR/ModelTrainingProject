@@ -15,18 +15,12 @@ from utils.backbone_factory import create_fpn_backbone
 # Словник з конфігураціями backbone: назва, рекомендований розмір (W, H) та опис
 BACKBONE_CONFIGS = {
     '1': ('resnet50', (800, 800), "ResNet-50 (стандартний)"),
-    '2': ('tf_efficientnet_b0', (512, 512), "EfficientDet-D0 (найлегший)"),
-    '3': ('tf_efficientnet_b1', (640, 640), "EfficientDet-D1"),
-    '4': ('tf_efficientnet_b2', (768, 768), "EfficientDet-D2"),
-    '5': ('tf_efficientnet_b3', (896, 896), "EfficientDet-D3"),
-    '6': ('tf_efficientnet_b4', (1024, 1024), "EfficientDet-D4"),
-    '7': ('tf_efficientnet_b5', (1280, 1280), "EfficientDet-D5"),
-    '8': ('swin_tiny_patch4_window7_224', (800, 800), "Swin-T (Tiny Transformer)"),
-    '9': ('swin_small_patch4_window7_224', (1024, 1024), "Swin-S (Small Transformer)"),
+    '2': ('swin_tiny_patch4_window7_224', (800, 800), "Swin-T (Tiny Transformer)"),
+    '3': ('swin_small_patch4_window7_224', (1024, 1024), "Swin-S (Small Transformer)"),
 }
 
 class RetinaNetWrapper(ModelWrapper):
-    """Обгортка для моделей RetinaNet з можливістю вибору backbone (ResNet50 або EfficientNet/Swin)."""
+    """Обгортка для моделей RetinaNet з можливістю вибору backbone (ResNet50 або Swin)."""
 
     def __init__(self, class_names, device):
         super().__init__(class_names, device)
@@ -45,7 +39,7 @@ class RetinaNetWrapper(ModelWrapper):
             choice = input(f"Ваш вибір (1-{len(BACKBONE_CONFIGS)}): ").strip()
             if choice in BACKBONE_CONFIGS:
                 backbone_type, recommended_size, desc = BACKBONE_CONFIGS[choice]
-                self.backbone_type = backbone_type # Зберігаємо для predict
+                self.backbone_type = backbone_type
                 print(f"✅ Обрано архітектуру на базі: {desc.split(' (')[0]}")
                 
                 if 'resnet' not in backbone_type:
@@ -55,7 +49,7 @@ class RetinaNetWrapper(ModelWrapper):
                         print("❌ Помилка: бібліотека 'timm' не встановлена. Оберіть інший backbone.")
                         continue
                 
-                    # --- Запит розміру ТІЛЬКИ ДЛЯ TIMM МОДЕЛЕЙ ---
+                    # --- Запит розміру ТІЛЬКИ ДЛЯ SWIN ---
                     if 'swin' in backbone_type:
                         print(f"⚠️ Увага: Рекомендований розмір для цієї моделі: {recommended_size[0]}x{recommended_size[1]}.")
                         custom_size_input = input("Введіть розмір зображення (одна сторона, наприклад, 800), на якому навчалася модель, або натисніть Enter, щоб використати рекомендований: ").strip()
@@ -69,7 +63,7 @@ class RetinaNetWrapper(ModelWrapper):
                         return backbone_type, (input_size, input_size)
                     
                     else:
-                        # Для EfficientNet повертаємо рекомендований розмір без запиту
+                        # Для EfficientNet (якщо б він був) повертаємо рекомендований розмір без запиту
                         return backbone_type, recommended_size
                 
                 else:
@@ -94,7 +88,7 @@ class RetinaNetWrapper(ModelWrapper):
                 in_channels = model.backbone.out_channels
                 
             else:
-                # ЛОГІКА ДЛЯ TIMM BACKBONES (Swin/EfficientNet)
+                # ЛОГІКА ДЛЯ TIMM BACKBONES (Swin)
                 input_size_param = image_size 
                 
                 if 'swin' in backbone_type:
@@ -145,8 +139,7 @@ class RetinaNetWrapper(ModelWrapper):
         rgb_frame = frame[:, :, ::-1].copy()
         
         # 2. Визначаємо, чи потрібне явне масштабування для входу. 
-        # Масштабування потрібне ЛИШЕ для Swin/EfficientNet (timm-based).
-        is_fixed_size_backbone = self.backbone_type and ('swin' in self.backbone_type or 'efficientnet' in self.backbone_type)
+        is_fixed_size_backbone = self.backbone_type and 'swin' in self.backbone_type
         
         frame_to_process = rgb_frame
         should_rescale_boxes = False
@@ -155,7 +148,7 @@ class RetinaNetWrapper(ModelWrapper):
         
         # 3. УМОВНЕ МАШТАБУВАННЯ
         if is_fixed_size_backbone:
-            # Масштабування виконується ЛИШЕ для Swin/EfficientNet
+            # Масштабування виконується ЛИШЕ для Swin
             if H_orig != H_target or W_orig != W_target:
                  frame_to_process = cv2.resize(rgb_frame, (W_target, H_target), interpolation=cv2.INTER_LINEAR)
                  should_rescale_boxes = True
