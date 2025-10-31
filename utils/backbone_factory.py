@@ -118,41 +118,42 @@ class LastLevelP6P7(nn.Module):
         p7 = self.p7(F_torch.relu(p6))
         return p6, p7
 
-def create_fpn_backbone(backbone_type: str, pretrained: bool = True, input_img_size=None):
+def create_fpn_backbone(backbone_type: str, pretrained: bool = True, input_img_size: tuple = (800, 800)): # <-- ЗМІНА: Додано input_img_size
     """
-    Створює backbone з FPN, включаючи ResNet, EfficientNet та Swin Transformer.
-    Приймає input_img_size для коректної ініціалізації timm моделей.
+    Створює backbone з FPN.
     """
-    if timm is None:
-        if 'efficientnet' in backbone_type or 'swin' in backbone_type:
-             raise ImportError("Для використання EfficientNet або Swin Transformer потрібна бібліотека 'timm'.")
-
-    # --- Загальні параметри FPN ---
     out_channels = 256
-    
+
     # ------------------------------------------------------------------
     # --- ЛОГІКА ДЛЯ TIMM BACKBONES (EfficientNet та Swin) ---
     # ------------------------------------------------------------------
     if 'efficientnet' in backbone_type or 'swin' in backbone_type:
+        if timm is None:
+            raise ImportError("Для використання EfficientNet/Swin потрібна бібліотека 'timm'.")
         
-        if input_img_size is None:
-            # Використовуємо значення за замовчуванням 800x800, якщо не передано
-            input_img_size = 800
-        elif isinstance(input_img_size, tuple):
-            # Якщо передано (W, H), використовуємо W або H, припускаючи квадратний вхід
-            input_img_size = input_img_size[0]
-            
+        # Обробка розміру
+        if isinstance(input_img_size, int):
+            size_for_timm = (input_img_size, input_img_size)
+        elif isinstance(input_img_size, tuple) and len(input_img_size) == 2:
+            size_for_timm = input_img_size
+        else:
+            size_for_timm = (800, 800) 
+        
+        timm_args = {}
+        timm_model_out_indices = None
+        
         if 'efficientnet' in backbone_type:
             timm_model_out_indices = (2, 3, 4) 
-        else: # Swin
+        elif 'swin' in backbone_type:
             timm_model_out_indices = (1, 2, 3) 
-            
+            timm_args = {'img_size': size_for_timm} # Swin вимагає img_size
+
         timm_model_base = timm.create_model(
             backbone_type,
             features_only=True,
             out_indices=timm_model_out_indices, 
             pretrained=pretrained,
-            img_size=input_img_size # <-- Використання переданого параметра
+            **timm_args # <-- ЗМІНА: Передача аргументу img_size для Swin
         )
         
         in_channels_list = timm_model_base.feature_info.channels()
@@ -161,17 +162,18 @@ def create_fpn_backbone(backbone_type: str, pretrained: bool = True, input_img_s
         return backbone
         
     # ------------------------------------------------------------------
-    # --- ЛОГІКА ДЛЯ RESNET50 (Використовуємо стандартну torchvision функцію) ---
+    # --- ЛОГІКА ДЛЯ RESNET50 (Стандартна torchvision функція) ---
     # ------------------------------------------------------------------
     elif backbone_type == 'resnet50':
         weights = models.ResNet50_Weights.DEFAULT if pretrained else None
         
         backbone = resnet_fpn_backbone(
-            'resnet50',
+            backbone_type,
             weights=weights,
-            trainable_layers=5
+            returned_layers=[2, 3, 4], # P3, P4, P5
+            # Додаткові блоки для RetinaNet
+            extra_blocks=LastLevelP6P7(out_channels, out_channels)
         )
         return backbone
-        
-    else:
-        raise ValueError(f"Непідтримуваний тип backbone: {backbone_type}")
+
+    raise ValueError(f"Невідомий тип backbone: {backbone_type}")
