@@ -1,4 +1,4 @@
-# Validators/retinanet_wrapper.py
+# retinanet_wrapper.py
 
 import os
 import torch
@@ -10,17 +10,18 @@ from Validators.model_wrapper import ModelWrapper
 from Validators.prediction import Prediction
 import cv2 
 
-from utils.backbone_factory import create_fpn_backbone
+from trainers.backbone_factory import create_fpn_backbone
 
 # Словник з конфігураціями backbone: назва, рекомендований розмір (W, H) та опис
 BACKBONE_CONFIGS = {
     '1': ('resnet50', (800, 800), "ResNet-50 (стандартний)"),
-    '2': ('swin_tiny_patch4_window7_224', (800, 800), "Swin-T (Tiny Transformer)"),
-    '3': ('swin_small_patch4_window7_224', (1024, 1024), "Swin-S (Small Transformer)"),
+    '2': ('mobilenet_v3_large', (640, 640), "MobileNetV3-Large (швидкий, легкий)"),
+    '3': ('swin_tiny_patch4_window7_224', (800, 800), "Swin-T (Tiny Transformer)"),
+    '4': ('swin_small_patch4_window7_224', (1024, 1024), "Swin-S (Small Transformer)"),
 }
 
 class RetinaNetWrapper(ModelWrapper):
-    """Обгортка для моделей RetinaNet з можливістю вибору backbone (ResNet50 або Swin)."""
+    """Обгортка для моделей RetinaNet з можливістю вибору backbone (ResNet50 або EfficientNet/Swin)."""
 
     def __init__(self, class_names, device):
         super().__init__(class_names, device)
@@ -42,7 +43,7 @@ class RetinaNetWrapper(ModelWrapper):
                 self.backbone_type = backbone_type
                 print(f"✅ Обрано архітектуру на базі: {desc.split(' (')[0]}")
                 
-                if 'resnet' not in backbone_type:
+                if 'resnet' not in backbone_type and 'mobilenet' not in backbone_type:
                     try:
                         import timm
                     except ImportError:
@@ -67,7 +68,7 @@ class RetinaNetWrapper(ModelWrapper):
                         return backbone_type, recommended_size
                 
                 else:
-                    # Для ResNet повертаємо рекомендований розмір без запиту
+                    # Для ResNet/MobileNet повертаємо рекомендований розмір без запиту
                     return backbone_type, recommended_size
             else:
                 print(f"❌ Невірний вибір. Будь ласка, введіть число від 1 до {len(BACKBONE_CONFIGS)}.")
@@ -87,6 +88,12 @@ class RetinaNetWrapper(ModelWrapper):
                 num_anchors = anchor_generator.num_anchors_per_location()[0]
                 in_channels = model.backbone.out_channels
                 
+            elif backbone_type == 'mobilenet_v3_large':
+                model = torchvision.models.detection.retinanet_mobilenet_v3_large_fpn(weights=None)
+                anchor_generator = model.anchor_generator
+                num_anchors = anchor_generator.num_anchors_per_location()[0]
+                in_channels = model.backbone.out_channels
+
             else:
                 # ЛОГІКА ДЛЯ TIMM BACKBONES (Swin)
                 input_size_param = image_size 
@@ -139,7 +146,7 @@ class RetinaNetWrapper(ModelWrapper):
         rgb_frame = frame[:, :, ::-1].copy()
         
         # 2. Визначаємо, чи потрібне явне масштабування для входу. 
-        is_fixed_size_backbone = self.backbone_type and 'swin' in self.backbone_type
+        is_fixed_size_backbone = self.backbone_type and ('swin' in self.backbone_type or 'mobilenet' in self.backbone_type)
         
         frame_to_process = rgb_frame
         should_rescale_boxes = False
@@ -148,7 +155,7 @@ class RetinaNetWrapper(ModelWrapper):
         
         # 3. УМОВНЕ МАШТАБУВАННЯ
         if is_fixed_size_backbone:
-            # Масштабування виконується ЛИШЕ для Swin
+            # Масштабування виконується ЛИШЕ для Swin/MobileNet
             if H_orig != H_target or W_orig != W_target:
                  frame_to_process = cv2.resize(rgb_frame, (W_target, H_target), interpolation=cv2.INTER_LINEAR)
                  should_rescale_boxes = True

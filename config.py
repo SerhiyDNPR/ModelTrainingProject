@@ -135,8 +135,8 @@ MASK_RCNN_TRAIN_PARAMS = {
 
 # Параметри для навчання RetinaNet
 RETINANET_TRAIN_PARAMS = {
-    'epochs': 25,
-    'batch': 2,
+    'epochs': 35,
+    'batch': 4,
     'accumulation_steps': 8,
     'lr': 0.0001,
     'device': 'cuda' if torch.cuda.is_available() else 'cpu',

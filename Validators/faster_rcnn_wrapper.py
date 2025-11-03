@@ -8,7 +8,7 @@ from torchvision.models.detection import FasterRCNN
 from torchvision.models.detection.backbone_utils import resnet_fpn_backbone
 from Validators.model_wrapper import ModelWrapper
 from Validators.prediction import Prediction
-from utils.backbone_factory import create_fpn_backbone 
+from trainers.backbone_factory import create_fpn_backbone 
 import cv2 
 
 BACKBONE_CHOICES = {

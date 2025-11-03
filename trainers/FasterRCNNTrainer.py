@@ -14,7 +14,7 @@ from trainers.trainers import BaseTrainer, collate_fn, log_dataset_statistics_to
 from torchmetrics.detection import MeanAveragePrecision
 from torch.utils.tensorboard import SummaryWriter
 from torchvision.models.detection.backbone_utils import resnet_fpn_backbone
-from utils.backbone_factory import create_fpn_backbone
+from trainers.backbone_factory import create_fpn_backbone
 
 # --- Універсальний тренер для Faster R-CNN з вибором backbone ---
 class FasterRCNNTrainer(BaseTrainer):

@@ -20,13 +20,14 @@ from torch.utils.tensorboard import SummaryWriter
 # Використовуємо той самий клас трансформацій, що і для FCOS
 from trainers.FCOS_trainer import DetectionTransforms
 
-from utils.backbone_factory import create_fpn_backbone
+from trainers.backbone_factory import create_fpn_backbone
 
 # Словник з конфігураціями backbone: назва, рекомендований розмір (ширина, висота) та опис
 BACKBONE_CONFIGS = {
     '1': ('resnet50', (800, 800), "ResNet-50 (стандартний, збалансований)"),
-    '2': ('swin_tiny_patch4_window7_224', (800, 800), "Swin-T (Tiny - Трансформер, швидкий)"),
-    '3': ('swin_small_patch4_window7_224', (1024, 1024), "Swin-S (Small - Трансформер, збалансований)"),
+    '2': ('mobilenet_v3_large', (640, 640), "MobileNetV3-Large (швидкий, легкий)"),
+    '3': ('swin_tiny_patch4_window7_224', (800, 800), "Swin-T (Tiny - Трансформер, швидкий)"),
+    '4': ('swin_small_patch4_window7_224', (1024, 1024), "Swin-S (Small - Трансформер, збалансований)"),
 }
 
 # --- Тренер для RetinaNet ---
@@ -81,8 +82,10 @@ class RetinaNetTrainer(BaseTrainer):
             return "RetinaNet"
             
         backbone_str = "ResNet-50"
-        if 'swin' in self.backbone_type:
-            backbone_str = self.backbone_type.upper().split('_')[0] + '-T' # Наприклад, SWIN-T
+        if self.backbone_type == 'mobilenet_v3_large':
+             backbone_str = 'MobileNetV3-Large'
+        elif 'swin' in self.backbone_type:
+            backbone_str = self.backbone_type.upper().split('_')[0] + '-T'
         
         mode_name = "Fine-tune" if self.training_mode == '_finetune' else "Full"
         return f"RetinaNet ({backbone_str} {mode_name})"
@@ -91,7 +94,7 @@ class RetinaNetTrainer(BaseTrainer):
         """Завантажує модель RetinaNet, адаптує її голову та заморожує ваги, якщо потрібно."""
         print(f"🔧 Створення моделі: {self._get_model_name()}")
 
-        # --- ЛОГІКА ДЛЯ SWIN (BACKBONES З TIMM) ---
+        # --- ЛОГІКА ДЛЯ TIMM BACKBONES (Swin) ---
         if 'swin' in self.backbone_type:
             print(f"🔧 Створення моделі: {self._get_model_name()}")
 
@@ -111,7 +114,7 @@ class RetinaNetTrainer(BaseTrainer):
 
             # Створюємо AnchorGenerator
             anchor_generator = AnchorGenerator(
-                sizes=anchor_sizes,
+                sizes=tuple([anchor_sizes] * len(anchor_level_sizes)),
                 aspect_ratios=anchor_aspect_ratios
             )
             
@@ -120,6 +123,29 @@ class RetinaNetTrainer(BaseTrainer):
             
             model = models.detection.RetinaNet(backbone, num_classes=num_classes, anchor_generator=anchor_generator)
 
+        elif self.backbone_type == 'mobilenet_v3_large':
+            # ЛОГІКА ДЛЯ MOBILE NET (Використання Faster R-CNN AnchorGenerator)
+            
+            # 1. Створюємо FPN-бекбон (через Faster R-CNN конструктор)
+            base_model = models.detection.fasterrcnn_mobilenet_v3_large_fpn(
+                weights=models.detection.FasterRCNN_MobileNet_V3_Large_FPN_Weights.DEFAULT
+            )
+            backbone = base_model.backbone
+            
+            # --- ВИПРАВЛЕННЯ: Використання коректного AnchorGenerator з base_model ---
+            anchor_generator = base_model.rpn.anchor_generator
+            
+            # 2. Визначаємо параметри RetinaNet Head
+            num_anchors = anchor_generator.num_anchors_per_location()[0]
+            in_channels = backbone.out_channels # Має бути 256
+            
+            # 3. Створюємо RetinaNet, використовуючи коректний AnchorGenerator
+            model = models.detection.RetinaNet(backbone, num_classes=num_classes, anchor_generator=anchor_generator)
+            
+            # 4. Створюємо та замінюємо голову RetinaNet
+            new_head = RetinaNetHead(in_channels, num_anchors, num_classes)
+            model.head = new_head
+            
         else: # 'resnet50' (використовує torchvision вбудований)
             model = models.detection.retinanet_resnet50_fpn_v2(weights=models.detection.RetinaNet_ResNet50_FPN_V2_Weights.DEFAULT)
             num_anchors = model.head.classification_head.num_anchors
@@ -140,11 +166,15 @@ class RetinaNetTrainer(BaseTrainer):
         
         return model
 
-    # Решта коду файлу залишається без змін...
     def start_or_resume_training(self, dataset_stats):
         if self.training_mode is None or self.backbone_type is None:
             self._select_configuration()
 
+        self.image_size = dataset_stats.get('image_size')
+        if not self.image_size:
+             print("❌ Помилка: Розмір зображення (image_size) не передано через dataset_stats.")
+             sys.exit(1)
+        
         imgsz = self.image_size
         print(f"\n--- Запуск тренування для {self._get_model_name()} ---")
         
@@ -209,7 +239,7 @@ class RetinaNetTrainer(BaseTrainer):
             if is_best:
                 best_map = val_map
 
-            self._save_checkpoint({
+            self.save_checkpoint({
                 'epoch': epoch + 1, 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(), 'best_map': best_map,
                 'lr_scheduler_state_dict': lr_scheduler.state_dict()
